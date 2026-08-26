@@ -1,11 +1,14 @@
 """SpoilerGate API. Run: uvicorn server.app:app"""
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from server import core, llm
+from server import cache, core, llm
+
+load_dotenv()
 
 app = FastAPI(title="SpoilerGate")
 
@@ -16,6 +19,11 @@ class AskRequest(BaseModel):
     work_id: int
     gate_abs: int  # abs_order of the last episode the viewer finished
     question: str
+
+
+class RecapRequest(BaseModel):
+    work_id: int
+    gate_abs: int
 
 
 @app.get("/api/works")
@@ -91,6 +99,57 @@ def ask(req: AskRequest):
         "tier": work["tier"],
         "gate_label": label,
     }
+
+
+# Groq's free tier caps tokens-per-minute at 8000 and counts max_tokens against
+# it, so context size is a hard budget, not a preference: ~12 summaries (~3.5k)
+# plus a 1.2k answer fits with headroom.
+# ponytail: a recap therefore covers the last 12 episodes, not the whole arc.
+# Fix by summarising per season offline once the deep tier exists (M3).
+RECAP_WINDOW = 12
+
+
+@app.post("/api/recap")
+def recap(req: RecapRequest):
+    with core.connect() as con:
+        work = con.execute("SELECT * FROM works WHERE id=?", (req.work_id,)).fetchone()
+        if not work:
+            raise HTTPException(404, "unknown work")
+        units = core.gated_units(con, req.work_id, req.gate_abs, RECAP_WINDOW)
+        blocklist = core.future_entities(con, req.work_id, req.gate_abs)
+
+    if not units:
+        return {"recap": "You haven't started this show yet — nothing to recap.",
+                "provenance": [], "mode": "gated"}
+
+    provenance = [core.ep_label(u) for u in units]
+    context = "\n\n".join(f"[{core.ep_label(u)}] {u['summary_text']}" for u in units)
+    key = f"recap:{req.work_id}:{req.gate_abs}:{RECAP_WINDOW}"
+
+    cached = cache.get(key)
+    if cached:
+        return {"recap": cached, "provenance": provenance, "mode": "cached"}
+
+    text = llm.chat([
+        {"role": "system", "content":
+            f"Write a \"previously on\" recap of {work['title']} for a viewer returning after a "
+            f"break. Use ONLY the episode summaries provided — they end exactly where the viewer "
+            f"stopped. Never mention or hint at anything beyond them, even if you know the show. "
+            f"Lead with the threads left hanging. Under 250 words, present tense, no episode "
+            f"numbers, no preamble."},
+        {"role": "user", "content": context},
+    ], max_tokens=1200)
+
+    if text is None:
+        return {"recap": "AI is unavailable right now — here are your watched episodes:\n\n"
+                         + context,
+                "provenance": provenance, "mode": "extractive"}
+
+    if core.guard_leaks(text, blocklist):
+        text = "Couldn't build a spoiler-safe recap for this position. Try the summaries instead."
+
+    cache.put(key, text)
+    return {"recap": text, "provenance": provenance, "mode": "gated"}
 
 
 web_dir = Path(__file__).resolve().parent.parent / "web"

@@ -19,7 +19,9 @@ def connect(path: str | Path | None = None) -> sqlite3.Connection:
 
 def search_works(con: sqlite3.Connection, q: str) -> list[dict]:
     rows = con.execute(
-        "SELECT id, title, media_type, tier FROM works WHERE title LIKE ? ORDER BY title LIMIT 20",
+        "SELECT id, title, media_type, tier FROM works "
+        "WHERE title LIKE ? AND tier != 'empty' "  # 'empty' = tried, no summaries to answer from
+        "ORDER BY length(title), title LIMIT 20",
         (f"%{q}%",),
     )
     return [dict(r) for r in rows]
@@ -41,7 +43,7 @@ def fts_query(question: str) -> str:
 
 
 def gated_retrieve(
-    con: sqlite3.Connection, work_id: int, gate_abs: int, question: str, k: int = 8
+    con: sqlite3.Connection, work_id: int, gate_abs: int, question: str, k: int = 6
 ) -> list[dict]:
     """BM25 top-k over episode summaries, gate applied in SQL before ranking."""
     rows = con.execute(
@@ -52,6 +54,19 @@ def gated_retrieve(
         (fts_query(question), work_id, gate_abs, k),
     )
     return [dict(r) for r in rows]
+
+
+def gated_units(
+    con: sqlite3.Connection, work_id: int, gate_abs: int, limit: int = 25
+) -> list[dict]:
+    """The most recent `limit` watched episodes, oldest first. Gate in SQL."""
+    rows = con.execute(
+        "SELECT abs_order, grouping, number, title, summary_text FROM units "
+        "WHERE work_id=? AND abs_order <= ? AND summary_text != '' "
+        "ORDER BY abs_order DESC LIMIT ?",
+        (work_id, gate_abs, limit),
+    )
+    return sorted((dict(r) for r in rows), key=lambda u: u["abs_order"])
 
 
 def future_entities(con: sqlite3.Connection, work_id: int, gate_abs: int) -> list[str]:

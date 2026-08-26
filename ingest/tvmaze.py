@@ -16,6 +16,20 @@ def fetch_show(query: str) -> dict:
     return r.json()
 
 
+def fetch_show_index() -> list[dict]:
+    """Every show TVMaze knows, with its `weight` popularity score (0-100).
+    Paginated 250 at a time; the index ends with a 404."""
+    shows, page = [], 0
+    while True:
+        r = httpx.get(f"{BASE}/shows", params={"page": page}, timeout=60)
+        if r.status_code == 404:
+            return shows
+        r.raise_for_status()
+        shows.extend(r.json())
+        page += 1
+        time.sleep(0.6)
+
+
 def fetch_episodes(show_id: int) -> list[dict]:
     """Regular episodes only, in airing order. abs_order assigned by position."""
     r = httpx.get(f"{BASE}/shows/{show_id}/episodes", timeout=30)

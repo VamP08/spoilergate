@@ -32,6 +32,7 @@
   </p>
   <textarea id="question" rows="2" placeholder="Your question…"></textarea>
   <button id="ask">Ask</button>
+  <button id="recap">Previously on…</button>
   <div class="trust" id="trustline"></div>
   <div id="answer" class="hidden"></div>
   <div class="prov" id="prov"></div>
@@ -105,18 +106,24 @@ function updateTrust() {
   }
 }
 
-$('ask').addEventListener('click', async () => {
-  const q = $('question').value.trim();
-  if (!q || !work) return;
+async function post(url, body, field) {
+  if (!work) return;
   $('answer').classList.remove('hidden');
   $('answer').textContent = 'Thinking…'; $('prov').textContent = '';
-  const res = await (await fetch('/api/ask', {
+  const res = await (await fetch(url, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ work_id: work.id, gate_abs: gateAbs(), question: q }),
+    body: JSON.stringify({ work_id: work.id, gate_abs: gateAbs(), ...body }),
   })).json();
-  $('answer').textContent = res.answer;
+  $('answer').textContent = res[field];
   $('prov').textContent = res.provenance?.length ? `Based on: ${res.provenance.join(', ')}` : '';
+}
+
+$('ask').addEventListener('click', () => {
+  const q = $('question').value.trim();
+  if (q) post('/api/ask', { question: q }, 'answer');
 });
+
+$('recap').addEventListener('click', () => post('/api/recap', {}, 'recap'));
 </script>
 </body>
 </html>
