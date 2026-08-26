@@ -21,7 +21,6 @@ import sys
 from pathlib import Path
 
 from server.ask import is_refusal
-from server.core import guard_leaks
 
 RUN_DIR = Path(__file__).resolve().parent.parent / "data" / "eval"
 

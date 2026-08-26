@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from server import ask as ask_module
 from server import cache, core, llm
-from server.ask import REFUSAL
 
 load_dotenv()
 
