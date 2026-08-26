@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: spoilergate
+    runtime: python
+    plan: free
+    # The index is built offline (ingest/build_db.py) and fetched at build time:
+    # Render's free tier has no persistent disk, and rebuilding it here would take
+    # hours of API calls. SPOILERGATE_DB_URL points at the release asset.
+    buildCommand: pip install -r requirements.txt && python scripts/fetch_db.py
+    startCommand: uvicorn server.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SPOILERGATE_DB_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # Generated text (recaps, profiles) is cached beside the index. The disk is
+      # ephemeral, so a cold start simply regenerates - see server/cache.py.
+      - key: SPOILERGATE_CACHE
+        value: /tmp/spoilergate-cache.db
