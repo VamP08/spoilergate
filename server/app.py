@@ -2,17 +2,36 @@
 import time
 from pathlib import Path
 
+from contextlib import asynccontextmanager
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from server import ask as ask_module
-from server import cache, core, llm
+from server import cache, core, durable, llm
 
 load_dotenv()
 
-app = FastAPI(title="SpoilerGate")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Replay shows indexed in earlier sessions before serving anything.
+
+    The filesystem is wiped whenever a free instance sleeps, so without this a
+    show someone indexed yesterday is simply gone. Failure is not fatal — the
+    baked index still answers everything it always did.
+    """
+    if durable.enabled():
+        con = core.connect()
+        try:
+            durable.restore(con)
+        finally:
+            con.close()
+    yield
+
+
+app = FastAPI(title="SpoilerGate", lifespan=lifespan)
 
 
 class AskRequest(BaseModel):
@@ -122,7 +141,7 @@ class IndexRequest(BaseModel):
 # TVMaze or Wikipedia, which breaks indexing for everyone. A whole-process cap
 # is crude but it bounds the damage.
 # ponytail: per-process and in-memory, so it resets on restart and does not
-# span instances. Enough while there is one free instance; revisit with Neon.
+# span instances. Enough while there is one free instance.
 INDEX_BUDGET = 20
 INDEX_WINDOW = 3600
 _index_times: list[float] = []
@@ -145,9 +164,9 @@ def index_show(req: IndexRequest):
     entity-indexed exactly like a precomputed one; there is no second, weaker
     path. The first person to ask waits; everyone after hits the database.
 
-    ponytail: writes into the running index, which on Render's free tier is an
-    ephemeral disk — a restart loses these and the next asker pays again. That
-    is the point at which this wants Neon, not before.
+    Writes go to the running index and, when DATABASE_URL is set, to Postgres,
+    which is what carries them across a free instance's sleep. With no database
+    configured the show still works — until the filesystem is wiped.
     """
     from ingest import build_db, tvmaze
 
@@ -178,11 +197,16 @@ def index_show(req: IndexRequest):
     row = con.execute(
         "SELECT id, title, media_type, tier FROM works WHERE tvmaze_id=?", (show["id"],)
     ).fetchone()
-    con.close()
     if row is None or row["tier"] == "empty":
+        con.close()
         raise HTTPException(
             404, "found the show, but there are no episode summaries to answer from")
-    return {"status": "indexed", **dict(row)}
+
+    # Keep it beyond this instance's life, so the next visitor after a sleep
+    # does not pay to index the same show again.
+    kept = durable.remember(con, row["id"])
+    con.close()
+    return {"status": "indexed", "kept": kept, **dict(row)}
 
 
 class CharacterRequest(BaseModel):

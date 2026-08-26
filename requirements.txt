@@ -4,3 +4,4 @@ httpx
 mwparserfromhell
 python-dotenv    # arrives via uvicorn[standard] too, but the server imports it directly
 pytest
+psycopg[binary]  # only imported when DATABASE_URL is set

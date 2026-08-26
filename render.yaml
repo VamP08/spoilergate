@@ -23,3 +23,8 @@ services:
       # ephemeral, so a cold start simply regenerates - see server/cache.py.
       - key: SPOILERGATE_CACHE
         value: /tmp/spoilergate-cache.db
+      # Optional. Shows visitors index themselves are written here too and
+      # replayed on boot, because a free instance's filesystem is wiped every
+      # time it sleeps. Unset is fine: the baked index still answers.
+      - key: DATABASE_URL
+        sync: false
