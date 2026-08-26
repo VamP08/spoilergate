@@ -2,4 +2,5 @@ fastapi
 uvicorn[standard]
 httpx
 mwparserfromhell
+python-dotenv    # arrives via uvicorn[standard] too, but the server imports it directly
 pytest

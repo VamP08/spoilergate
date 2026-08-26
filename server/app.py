@@ -1,4 +1,5 @@
 """SpoilerGate API. Run: uvicorn server.app:app"""
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -108,6 +109,26 @@ class IndexRequest(BaseModel):
     query: str
 
 
+# /api/index is the one endpoint an anonymous visitor can use to make us crawl
+# somebody else's API. Left open, a bored visitor gets our IP rate-limited by
+# TVMaze or Wikipedia, which breaks indexing for everyone. A whole-process cap
+# is crude but it bounds the damage.
+# ponytail: per-process and in-memory, so it resets on restart and does not
+# span instances. Enough while there is one free instance; revisit with Neon.
+INDEX_BUDGET = 20
+INDEX_WINDOW = 3600
+_index_times: list[float] = []
+
+
+def take_index_slot() -> bool:
+    now = time.monotonic()
+    _index_times[:] = [t for t in _index_times if now - t < INDEX_WINDOW]
+    if len(_index_times) >= INDEX_BUDGET:
+        return False
+    _index_times.append(now)
+    return True
+
+
 @app.post("/api/index")
 def index_show(req: IndexRequest):
     """Index a show nobody has asked for yet — the long tail of Layer 2.
@@ -130,6 +151,10 @@ def index_show(req: IndexRequest):
         existing = core.search_works(con, query)
     if existing:
         return {"status": "already indexed", **existing[0]}
+
+    if not take_index_slot():
+        raise HTTPException(
+            429, "too many shows indexed in the last hour — try again later")
 
     con = build_db.connect()
     try:
