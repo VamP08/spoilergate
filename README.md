@@ -60,7 +60,9 @@ without a model: Wikipedia links a character on first mention inside an episode 
 and TVMaze's cast list supplies the leads that episode tables never link.
 
 Shows outside the prebuilt index are indexed on demand, through the same pipeline, in a
-few seconds.
+few seconds. On a free host that index lives on an ephemeral disk, so a show added this
+way lasts until the service next sleeps and the following visitor re-indexes it. Your
+position in a show is different: it stays in your own browser and is never sent anywhere.
 
 ## How well it works
 
@@ -113,3 +115,5 @@ so rescoring costs nothing.
   answer is only as good as whichever episodes rank highest.
 - The eval measures spoiler leaks well. It does not measure whether an answer is wrong
   about an episode you *have* watched that retrieval didn't return.
+- Nothing about a viewer is stored on the server, which is why there are no accounts —
+  and why a position does not follow you between devices.

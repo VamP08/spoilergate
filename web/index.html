@@ -390,8 +390,15 @@ $('home').onclick = () => { $('search').value = ''; showIntro(); };
 
 /* ── show view ───────────────────────────────────────────── */
 async function openShow(id) {
-  work = await (await api(`/api/works/${id}`)).json();
-  position = store()[work.id]?.position || 1;
+  const res = await api(`/api/works/${id}`);
+  if (!res.ok) {                     // indexed in a previous session, now gone
+    $('search').value = '';
+    showIntro();
+    return;
+  }
+  work = await res.json();
+  const saved = store()[work.id];
+  position = (saved && saved.title === work.title) ? saved.position : 1;
   if (!work.units.some(u => u.abs_order === position)) position = 1;
 
   $('grid').classList.add('hidden');
@@ -455,7 +462,11 @@ function renderTrack() {
 
 function save() {
   const all = store();
-  all[work.id] = { position, updated_at: Date.now() };
+  // The title rides along because a work id is not stable across restarts: an
+  // on-demand show only lives until the server next sleeps, and the id it held
+  // gets handed to whatever is indexed next. Without this check a saved
+  // position would silently reappear against a different show.
+  all[work.id] = { position, title: work.title, updated_at: Date.now() };
   localStorage.setItem('spoilergate', JSON.stringify(all));
 }
 
