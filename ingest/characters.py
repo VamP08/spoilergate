@@ -47,6 +47,20 @@ def is_person(name: str) -> bool:
     return bool(PERSON.match(name)) and "," not in name
 
 
+def looks_like_a_name(text: str) -> bool:
+    """Link display text that could be what the show calls someone.
+
+    "Cupid" and "Walt" qualify; "his father" and "implanting a microchip" do
+    not, and blocklisting those would refuse answers over everyday phrases.
+    """
+    return (
+        len(text) > 2
+        and text[0].isupper()
+        and text.split()[0].lower() not in NOT_A_NAME
+        and all(w[0].isupper() or w.lower() in SUFFIXES for w in text.split() if w)
+    )
+
+
 def is_character_name(name: str) -> bool:
     """Stricter than `is_person`, for typing entities that came from a link.
 
@@ -156,23 +170,35 @@ def entities_from_units(units: list[dict]) -> list[dict]:
     """
     first: dict[str, int] = {}
     aliases: dict[str, set[str]] = {}
+    kinds: dict[str, bool] = {}
     for unit in sorted(units, key=lambda u: u["abs_order"]):
         for target, display in unit.get("links", []):
-            name = clean_target(target)
-            if not name:
+            article = clean_target(target)
+            if not article:
                 continue
+            # Wikipedia links the article title; the prose uses whatever the
+            # show calls them. [[Carrie Cutter|Cupid]] means every summary says
+            # "Cupid", so storing "Carrie Cutter" gives a character list full of
+            # names the show never says, and a question about one retrieves
+            # nothing. Same rule as the billed-cast names: lead with the form
+            # the corpus uses. Whether it is a person is still judged on the
+            # article title, since a codename is rarely two capitalised words.
+            name = display if display and looks_like_a_name(display) else article
+            kinds.setdefault(name, is_character_name(article) or is_character_name(name))
+            if name != article:
+                aliases.setdefault(name, set()).add(article)
             first.setdefault(name, unit["abs_order"])
             # An alias must look like a name: [[Walter White|Walt]] is useful,
             # [[Walter White|his father]] would blocklist an everyday phrase.
-            if display and display != name and len(display) > 2 and display[0].isupper():
+            if display and display != name and looks_like_a_name(display):
                 aliases.setdefault(name, set()).add(display)
     return [
         {
             "name": name,
             # Only alias a person: "board" for "Board of directors" would block
             # an ordinary word every time it appeared in an answer.
-            "aliases": "|".join(sorted(aliases.get(name, ()))) if is_person(name) else "",
-            "type": "character" if is_character_name(name) else "term",
+            "aliases": "|".join(sorted(aliases.get(name, ()))) if kinds.get(name) else "",
+            "type": "character" if kinds.get(name) else "term",
             "first_appearance_abs": abs_order,
         }
         for name, abs_order in sorted(first.items(), key=lambda kv: (kv[1], kv[0]))

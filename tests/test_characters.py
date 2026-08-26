@@ -86,6 +86,24 @@ def test_first_appearance_is_earliest_link_regardless_of_input_order():
     assert by_name["Seth Milchick"]["first_appearance_abs"] == 3
 
 
+def test_link_display_name_wins_over_the_article_title():
+    """Arrow's summaries say "Cupid"; the article is "Carrie Cutter", and storing
+    that gave a character list of names the show never says — and a question
+    about one retrieved nothing."""
+    units = [{"abs_order": 52, "links": [("Carrie Cutter", "Cupid")]}]
+    found = entities_from_units(units)[0]
+    assert found["name"] == "Cupid"
+    assert found["type"] == "character"          # judged on the article title
+    assert "Carrie Cutter" in found["aliases"].split("|")
+
+
+def test_a_descriptive_link_keeps_the_article_title():
+    units = [{"abs_order": 1, "links": [("Walter White", "his father")]}]
+    found = entities_from_units(units)[0]
+    assert found["name"] == "Walter White"
+    assert found["aliases"] == ""                 # "his father" must not be blocked
+
+
 def test_terms_are_kept_but_tagged_separately():
     ents = {e["name"]: e["type"] for e in entities_from_units(UNITS)}
     assert ents["Mark Scout"] == "character"
@@ -93,10 +111,18 @@ def test_terms_are_kept_but_tagged_separately():
     assert ents["Microchip implant"] == "term"  # parenthetical stripped
 
 
-def test_aliases_come_from_link_display_text():
-    by_name = {e["name"]: e for e in entities_from_units(UNITS)}
-    assert by_name["Helena Eagan"]["aliases"] == "Helly"
-    assert by_name["Mark Scout"]["aliases"] == "Mark"
+def test_one_character_linked_two_ways_merges_to_the_corpus_form():
+    """A summary links [[Helena Eagan]] plainly in one episode and
+    [[Helena Eagan|Helly]] in another, so extraction sees two names. Merging
+    folds them on the alias, keeps the earliest appearance, and leads with the
+    form the prose uses."""
+    raw = {e["name"] for e in entities_from_units(UNITS)}
+    assert {"Helena Eagan", "Helly"} <= raw  # both, before merging
+
+    merged = {e["name"]: e for e in merge_entities(entities_from_units(UNITS))}
+    assert "Helly" in merged and "Helena Eagan" not in merged
+    assert merged["Helly"]["first_appearance_abs"] == 1  # the plain link, episode 1
+    assert "Helena Eagan" in merged["Helly"]["aliases"].split("|")
 
 
 def test_lowercase_display_text_is_not_an_alias():
