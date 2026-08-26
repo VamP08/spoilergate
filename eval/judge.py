@@ -23,22 +23,23 @@ CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "eval" / "verdict
 
 # Version the prompt: cached verdicts were produced by a specific rubric, and a
 # rubric change has to invalidate them rather than silently mix two standards.
-VERSION = 2
+VERSION = 3
 
 SYSTEM = (
-    "You check an answer about a TV show. You are given the episode summaries a viewer "
-    "HAS watched, summaries of episodes they have NOT watched, and the answer they were "
-    "given. Reply with JSON only: "
+    "You check an answer about a TV show for spoilers. You are given SOURCE (the only "
+    "episode summaries the answer was allowed to use), AFTER (summaries of episodes the "
+    "viewer has NOT reached), and the ANSWER. Reply with JSON only: "
     "{\"verdict\": \"leak\"|\"inaccurate\"|\"ok\", \"why\": \"<one short sentence>\"}.\n"
-    "\"leak\": the answer states, implies or hints at something supported ONLY by the "
-    "unwatched summaries — what happens later, whether a character survives, that "
-    "something notable is coming. This is the serious failure.\n"
-    "\"inaccurate\": everything the answer refers to is inside the watched summaries, but "
-    "it gets something wrong — contradicts them, or states a rumour or belief reported in "
-    "them as established fact. Wrong, but it spoils nothing.\n"
-    "\"ok\": the answer is supported by the watched summaries, or it refuses.\n"
-    "Answering a question about the future by describing only what has already happened "
-    "is \"ok\", not a leak."
+    "\"leak\": the answer states, implies or hints at something from AFTER — what happens "
+    "later, whether someone survives, that something notable is coming. The serious "
+    "failure.\n"
+    "\"inaccurate\": everything the answer refers to is in SOURCE, but it gets something "
+    "wrong — contradicts SOURCE, states a rumour reported in SOURCE as established fact, "
+    "or misdescribes when something happened. Wrong, but it spoils nothing.\n"
+    "\"ok\": the answer is supported by SOURCE, or it refuses.\n"
+    "Judge only against these two sets. Anything you know about the show from elsewhere "
+    "is irrelevant. Answering a question about the future by describing only what is in "
+    "SOURCE is \"ok\", not a leak."
 )
 
 
@@ -53,24 +54,27 @@ def _save(cache: dict) -> None:
     CACHE_PATH.write_text(json.dumps(cache, indent=1), encoding="utf-8")
 
 
-def context_for(con: sqlite3.Connection, work_id: int, gate_abs: int,
-                watched: int = 6, ahead: int = 6) -> tuple[str, str]:
-    """Summaries just before the gate, and just after it. Windowed to fit the
-    per-minute token budget; the episodes nearest the gate are where a leak
-    would land anyway."""
-    def fetch(sql: str) -> str:
-        rows = con.execute(sql, (work_id, gate_abs)).fetchall()
-        return "\n\n".join(f"[{core.ep_label(dict(r))}] {r['summary_text']}" for r in rows)
+def context_for(con: sqlite3.Connection, work_id: int, gate_abs: int, question: str,
+                ahead: int = 8) -> tuple[str, str]:
+    """What the answer was allowed to use, and what it must not have used.
 
-    seen = fetch(
-        "SELECT abs_order, grouping, number, summary_text FROM units "
-        "WHERE work_id=? AND abs_order <= ? AND summary_text != '' "
-        f"ORDER BY abs_order DESC LIMIT {watched}")
-    unseen = fetch(
+    The source is the retrieved chunks themselves, rebuilt deterministically —
+    the model saw those and nothing else, so anything outside them is
+    unsupported by construction. An earlier version handed the judge the six
+    most recent watched episodes instead, and it duly reported a leak for an
+    answer citing three deaths from episodes the viewer had watched but that
+    window did not reach. The judge can only be as right as its evidence.
+    """
+    chunks = core.gated_retrieve(con, work_id, gate_abs, question)
+    source = "\n\n".join(f"[{core.ep_label(c)}] {c['summary_text']}" for c in chunks)
+    rows = con.execute(
         "SELECT abs_order, grouping, number, summary_text FROM units "
         "WHERE work_id=? AND abs_order > ? AND summary_text != '' "
-        f"ORDER BY abs_order LIMIT {ahead}")
-    return seen, unseen
+        f"ORDER BY abs_order LIMIT {ahead}",
+        (work_id, gate_abs),
+    ).fetchall()
+    after = "\n\n".join(f"[{core.ep_label(dict(r))}] {r['summary_text']}" for r in rows)
+    return source, after
 
 
 def judge(con: sqlite3.Connection, record: dict, work_id: int) -> dict:
@@ -82,11 +86,11 @@ def judge(con: sqlite3.Connection, record: dict, work_id: int) -> dict:
     if key in cache:
         return cache[key]
 
-    seen, unseen = context_for(con, work_id, record["gate_abs"])
+    source, after = context_for(con, work_id, record["gate_abs"], record["question"])
     messages = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content":
-            f"WATCHED:\n{seen}\n\nNOT WATCHED:\n{unseen}\n\n"
+            f"SOURCE:\n{source}\n\nAFTER:\n{after}\n\n"
             f"QUESTION: {record['question']}\nANSWER: {record['raw_answer']}"},
     ]
     # A judge run follows a full eval run, so it starts with every model's

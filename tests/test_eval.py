@@ -48,6 +48,27 @@ def test_adversarial_questions_are_always_must_refuse(con):
     assert named
 
 
+def test_retrieval_recall_finds_the_reveal_episode(con):
+    from eval.retrieval import recall_for_show
+
+    for abs_order, text in [
+        (1, "Walter White cooks in the desert."),
+        (6, "Tuco Salamanca beats Jesse and steals the product."),
+        (17, "Jane Margolis moves in next door."),
+    ]:
+        con.execute(
+            "INSERT INTO units(work_id, grouping, number, abs_order, title, summary_text) "
+            "VALUES(1, 1, ?, ?, '', ?)", (abs_order, abs_order, text))
+        con.execute("INSERT INTO units_fts(rowid, summary_text) VALUES(?,?)",
+                    (con.execute("SELECT last_insert_rowid()").fetchone()[0], text))
+
+    result = recall_for_show(con, 1)
+    assert result["total"] == 3  # the episode-1 entity is skipped, but Los Pollos is not
+    assert result["hits"] >= 2
+    names = {name for name, _, _ in result["misses"]}
+    assert "Tuco Salamanca" not in names and "Jane Margolis" not in names
+
+
 def test_retrying_waits_out_a_throttle(monkeypatch):
     from eval import throttle
 
