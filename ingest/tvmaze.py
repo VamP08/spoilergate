@@ -7,11 +7,13 @@ import time
 
 import httpx
 
+from ingest import http
+
 BASE = "https://api.tvmaze.com"
 
 
 def fetch_show(query: str) -> dict:
-    r = httpx.get(f"{BASE}/singlesearch/shows", params={"q": query}, timeout=30)
+    r = http.get(f"{BASE}/singlesearch/shows", params={"q": query}, timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -21,7 +23,7 @@ def fetch_show_index() -> list[dict]:
     Paginated 250 at a time; the index ends with a 404."""
     shows, page = [], 0
     while True:
-        r = httpx.get(f"{BASE}/shows", params={"page": page}, timeout=60)
+        r = http.get(f"{BASE}/shows", params={"page": page}, timeout=60)
         if r.status_code == 404:
             return shows
         r.raise_for_status()
@@ -34,7 +36,7 @@ def fetch_cast(show_id: int) -> list[str]:
     """Billed character names, e.g. "Gustavo 'Gus' Fring". Empty on failure —
     entity extraction still has the wikilink source to fall back on."""
     try:
-        r = httpx.get(f"{BASE}/shows/{show_id}/cast", timeout=30)
+        r = http.get(f"{BASE}/shows/{show_id}/cast", timeout=30)
         r.raise_for_status()
         time.sleep(0.6)
         return [c["character"]["name"] for c in r.json() if not c.get("self")]
@@ -44,7 +46,7 @@ def fetch_cast(show_id: int) -> list[str]:
 
 def fetch_episodes(show_id: int) -> list[dict]:
     """Regular episodes only, in airing order. abs_order assigned by position."""
-    r = httpx.get(f"{BASE}/shows/{show_id}/episodes", timeout=30)
+    r = http.get(f"{BASE}/shows/{show_id}/episodes", timeout=30)
     r.raise_for_status()
     time.sleep(0.6)  # stay far under the rate limit when looping shows
     eps = [e for e in r.json() if e.get("type") == "regular"]

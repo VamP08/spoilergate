@@ -6,15 +6,16 @@ attribution (source_url per unit).
 """
 import re
 
-import httpx
 import mwparserfromhell
+
+from ingest import http
 
 API = "https://en.wikipedia.org/w/api.php"
 UA = "SpoilerGate/0.1 (jayanisanjay@gmail.com)"
 
 
 def fetch_wikitext(page: str) -> str | None:
-    r = httpx.get(
+    r = http.get(
         API,
         params={
             "action": "parse",
