@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpoilerGate</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔒</text></svg>">
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  input, select, button, textarea { font: inherit; padding: .5rem; margin: .25rem 0; }
+  input, textarea { width: 100%; box-sizing: border-box; }
+  #answer { white-space: pre-wrap; border: 1px solid #8884; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+  .trust { font-size: .85rem; opacity: .75; margin-top: .5rem; }
+  .prov { font-size: .85rem; opacity: .75; }
+  #results button { display: block; width: 100%; text-align: left; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>SpoilerGate</h1>
+<p>Ask anything about a show — answers use only what you've already watched.</p>
+
+<input id="search" placeholder="Search a show (e.g. Breaking Bad)…" autocomplete="off">
+<div id="results"></div>
+
+<div id="picker" class="hidden">
+  <p>I'm about to watch:
+    <select id="season"></select>
+    <select id="episode"></select>
+  </p>
+  <textarea id="question" rows="2" placeholder="Your question…"></textarea>
+  <button id="ask">Ask</button>
+  <div class="trust" id="trustline"></div>
+  <div id="answer" class="hidden"></div>
+  <div class="prov" id="prov"></div>
+</div>
+
+<script>
+let work = null, units = [];
+
+const $ = id => document.getElementById(id);
+
+$('search').addEventListener('input', async e => {
+  const q = e.target.value.trim();
+  if (q.length < 2) { $('results').innerHTML = ''; return; }
+  const works = await (await fetch(`/api/works?q=${encodeURIComponent(q)}`)).json();
+  if (q !== $('search').value.trim()) return;  // stale response, a newer request is in flight
+  $('results').innerHTML = '';
+  for (const w of works) {
+    const b = document.createElement('button');
+    b.textContent = w.title;
+    b.onclick = () => selectWork(w);
+    $('results').appendChild(b);
+  }
+});
+
+async function selectWork(w) {
+  work = w;
+  $('results').innerHTML = '';
+  $('search').value = w.title;
+  units = await (await fetch(`/api/works/${w.id}/units`)).json();
+  const seasons = [...new Set(units.map(u => u.grouping))];
+  $('season').innerHTML = seasons.map(s => `<option value="${s}">Season ${s}</option>`).join('');
+  $('season').onchange = fillEpisodes;
+  fillEpisodes();
+  const saved = JSON.parse(localStorage.getItem('spoilergate') || '{}')[w.id];
+  if (saved) setPosition(saved.position);
+  $('picker').classList.remove('hidden');
+}
+
+function fillEpisodes() {
+  const s = +$('season').value;
+  $('episode').innerHTML = '';
+  for (const u of units.filter(u => u.grouping === s)) {
+    const o = document.createElement('option');
+    o.value = u.abs_order;
+    o.textContent = `E${String(u.number).padStart(2,'0')} — ${u.title}`;
+    $('episode').appendChild(o);
+  }
+  updateTrust();
+  $('episode').onchange = updateTrust;
+}
+
+function setPosition(abs) {
+  const u = units.find(x => x.abs_order === abs);
+  if (!u) return;
+  $('season').value = u.grouping; fillEpisodes(); $('episode').value = abs;
+  updateTrust();
+}
+
+function gateAbs() { return +$('episode').value - 1; }  // about-to-watch => gate at previous
+
+function updateTrust() {
+  const g = gateAbs();
+  const u = units.find(x => x.abs_order === g);
+  $('trustline').textContent = g < 1
+    ? 'Fresh start — answers will use nothing from the show yet.'
+    : `Answers use only facts through S${String(u.grouping).padStart(2,'0')}E${String(u.number).padStart(2,'0')} — enforced by retrieval, not by asking the AI nicely.`;
+  if (work) {
+    const store = JSON.parse(localStorage.getItem('spoilergate') || '{}');
+    store[work.id] = { position: +$('episode').value, updated_at: Date.now() };
+    localStorage.setItem('spoilergate', JSON.stringify(store));
+  }
+}
+
+$('ask').addEventListener('click', async () => {
+  const q = $('question').value.trim();
+  if (!q || !work) return;
+  $('answer').classList.remove('hidden');
+  $('answer').textContent = 'Thinking…'; $('prov').textContent = '';
+  const res = await (await fetch('/api/ask', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ work_id: work.id, gate_abs: gateAbs(), question: q }),
+  })).json();
+  $('answer').textContent = res.answer;
+  $('prov').textContent = res.provenance?.length ? `Based on: ${res.provenance.join(', ')}` : '';
+});
+</script>
+</body>
+</html>
