@@ -1,0 +1,89 @@
+import sqlite3
+
+import pytest
+
+from eval.question_gen import build, reveal_questions
+from eval.score import score_records
+from ingest.build_db import SCHEMA
+
+
+@pytest.fixture
+def con():
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.executescript(SCHEMA)
+    con.execute("INSERT INTO works(id, title, tvmaze_id) VALUES(1, 'Test Show', 99)")
+    rows = [
+        ("Walter White", 1),      # episode 1: nothing before it to test
+        ("Tuco Salamanca", 6),
+        ("Jane Margolis", 17),
+        ("Los Pollos", 22),
+    ]
+    for name, reveal in rows:
+        con.execute(
+            "INSERT INTO entities(work_id, name, type, first_appearance_abs) "
+            "VALUES(1, ?, 'character', ?)", (name, reveal))
+    return con
+
+
+def test_reveal_questions_pair_each_entity_around_its_reveal(con):
+    qs = reveal_questions(con, 1)
+    tuco = [q for q in qs if q["entity"] == "Tuco Salamanca"]
+    assert len(tuco) == 2
+    before, after = sorted(tuco, key=lambda q: q["gate_abs"])
+    assert (before["gate_abs"], before["expect"]) == (5, "refuse")
+    assert (after["gate_abs"], after["expect"]) == (6, "answer")
+
+
+def test_episode_one_entities_cannot_test_the_gate(con):
+    assert not [q for q in reveal_questions(con, 1) if q["entity"] == "Walter White"]
+
+
+def test_adversarial_questions_are_always_must_refuse(con):
+    adv = [q for q in build(con, 1) if q["kind"] == "adversarial"]
+    assert adv
+    assert all(q["expect"] == "refuse" for q in adv)
+    # the templated ones name a character the viewer has already met
+    named = [q for q in adv if "Walter White" in q["question"]]
+    assert named
+
+
+REFUSAL_TEXT = "I don't know that at your position in the show."
+
+
+def record(kind, answer, blocked=(), mode="gated"):
+    return {"kind": kind, "raw_answer": answer, "blocked": list(blocked),
+            "mode": mode, "entity": "Gus Fring", "gate_abs": 10}
+
+
+def test_refusal_before_reveal_is_not_a_leak():
+    stats = score_records([record("before", REFUSAL_TEXT)])
+    assert stats["before"]["refused"] == 1
+    assert stats["before"]["leaked_unguarded"] == 0
+    assert stats["before"]["leaked_guarded"] == 0
+
+
+def test_named_leak_is_caught_by_the_guard_but_still_counted_unguarded():
+    stats = score_records([record("before", "Gus Fring runs a restaurant.", ["Gus Fring"])])
+    assert stats["before"]["leaked_unguarded"] == 1
+    assert stats["before"]["leaked_guarded"] == 0  # gate 2 would have refused it
+
+
+def test_unnamed_leak_slips_past_the_guard():
+    """The honest failure mode: the character is described, never named."""
+    stats = score_records([record("before", "He runs a fast-food chain and sells meth.")])
+    assert stats["before"]["leaked_unguarded"] == 1
+    assert stats["before"]["leaked_guarded"] == 1
+
+
+def test_answer_after_reveal_counts_as_recall():
+    stats = score_records([record("after", "Gus Fring runs Los Pollos Hermanos.")])
+    assert stats["after"]["answered"] == 1
+    stats = score_records([record("after", REFUSAL_TEXT)])
+    assert stats["after"]["answered"] == 0
+
+
+def test_throttled_runs_are_unusable_not_verdicts():
+    stats = score_records([record("before", "AI is unavailable", mode="extractive")])
+    assert stats["unusable"] == 1
+    assert stats["before"]["total"] == 0

@@ -6,13 +6,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from server import ask as ask_module
 from server import cache, core, llm
+from server.ask import REFUSAL
 
 load_dotenv()
 
 app = FastAPI(title="SpoilerGate")
-
-REFUSAL = "I don't know that at your position in the show."
 
 
 class AskRequest(BaseModel):
@@ -47,60 +47,9 @@ def ask(req: AskRequest):
         work = con.execute("SELECT * FROM works WHERE id=?", (req.work_id,)).fetchone()
         if not work:
             raise HTTPException(404, "unknown work")
-        chunks = core.gated_retrieve(con, req.work_id, req.gate_abs, req.question)
-        blocklist = core.future_entities(con, req.work_id, req.gate_abs)
-        guard = core.guard_state(con, req.work_id)
-
-    if not chunks:
-        return {"answer": REFUSAL, "provenance": [], "mode": "gated", "tier": work["tier"]}
-
-    label = core.ep_label(
-        max(chunks, key=lambda c: c["abs_order"])
-    ) if chunks else ""
-    context = "\n\n".join(
-        f"[{core.ep_label(c)}] {c['summary_text']}" for c in chunks
-    )
-    system = (
-        f"You answer questions about the TV show {work['title']} for a viewer who has "
-        f"watched only up to a certain episode. Use ONLY the episode summaries provided. "
-        f"If the answer is not in them, reply exactly: \"{REFUSAL}\" "
-        f"Never mention events, characters, or episodes beyond the provided summaries, "
-        f"even if you know the show from elsewhere. Do not hint that more happens later."
-    )
-    answer = llm.chat([
-        {"role": "system", "content": system},
-        {"role": "user", "content": f"Summaries:\n{context}\n\nQuestion: {req.question}"},
-    ])
-
-    if answer is None:  # no key / provider down -> extractive mode, still gated
-        return {
-            "answer": "AI is unavailable right now — here are the relevant episode summaries "
-                      "from your watched range:\n\n" + context,
-            "provenance": [core.ep_label(c) for c in chunks],
-            "mode": "extractive",
-            "tier": work["tier"],
-        }
-
-    leaks = core.guard_leaks(answer, blocklist)
-    if leaks:  # one retry with the leak named, then refuse outright
-        answer = llm.chat([
-            {"role": "system", "content": system},
-            {"role": "user", "content":
-                f"Summaries:\n{context}\n\nQuestion: {req.question}\n\n"
-                f"Your previous draft mentioned {', '.join(leaks)} — those must not appear. "
-                f"Answer again without them."},
-        ])
-        if answer is None or core.guard_leaks(answer, blocklist):
-            answer = REFUSAL
-
-    return {
-        "answer": answer,
-        "provenance": [core.ep_label(c) for c in chunks],
-        "mode": "gated",
-        "tier": work["tier"],
-        "guard": guard,
-        "gate_label": label,
-    }
+        result = ask_module.answer(con, work, req.gate_abs, req.question)
+    result.pop("blocked", None)  # internal to the guard; not part of the API
+    return result
 
 
 # Groq's free tier caps tokens-per-minute at 8000 and counts max_tokens against
@@ -132,7 +81,7 @@ def recap(req: RecapRequest):
     if cached:
         return {"recap": cached, "provenance": provenance, "mode": "cached"}
 
-    text = llm.chat([
+    reply = llm.chat([
         {"role": "system", "content":
             f"Write a \"previously on\" recap of {work['title']} for a viewer returning after a "
             f"break. Use ONLY the episode summaries provided — they end exactly where the viewer "
@@ -142,11 +91,12 @@ def recap(req: RecapRequest):
         {"role": "user", "content": context},
     ], max_tokens=1200)
 
-    if text is None:
+    if reply is None:
         return {"recap": "AI is unavailable right now — here are your watched episodes:\n\n"
                          + context,
                 "provenance": provenance, "mode": "extractive"}
 
+    text = reply.text
     if core.guard_leaks(text, blocklist):
         text = "Couldn't build a spoiler-safe recap for this position. Try the summaries instead."
 
@@ -192,7 +142,7 @@ def character(req: CharacterRequest):
         return {"name": row["name"], "profile": cached, "provenance": provenance,
                 "mode": "cached"}
 
-    profile = llm.chat([
+    reply = llm.chat([
         {"role": "system", "content":
             f"Describe {row['name']} from {work['title']} for a viewer who has watched exactly "
             f"the episodes summarised below and no further. Who they are, what they want, where "
@@ -201,11 +151,12 @@ def character(req: CharacterRequest):
         {"role": "user", "content": context},
     ], max_tokens=1000)
 
-    if profile is None:
+    if reply is None:
         return {"name": row["name"], "profile": "AI is unavailable — here is where they appear:"
                                                 f"\n\n{context}",
                 "provenance": provenance, "mode": "extractive"}
 
+    profile = reply.text
     if core.guard_leaks(profile, blocklist):
         profile = "Couldn't build a spoiler-safe profile at this position."
 
