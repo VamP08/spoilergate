@@ -6,11 +6,51 @@ guard, and then the published number would describe something nobody runs.
 `apply_guard=False` records what the model produced before gate 2 removed
 anything, which is how the guard's own catch rate gets measured.
 """
+import re
 import sqlite3
 
 from server import core, llm
 
 REFUSAL = "I don't know that at your position in the show."
+FUTURE_REFUSAL = (
+    "That asks about what happens after where you are. I can only answer from "
+    "what you've already watched."
+)
+
+# Questions whose answer lies beyond the gate no matter what was retrieved.
+# The eval caught the reason this has to be a rule and not a prompt: asked at
+# episode 1 whether Adam Hunt was still around, and at episode 3 whether he
+# dies, the model answered "yes" and "no". He is killed in episode 9. Nothing
+# could catch it downstream — he appears in the pilot, so he is not a future
+# entity and there is no name for the post-guard to block.
+#
+# The deeper rule: the gated summaries show what HAS happened, never what has
+# not. Any answer asserting that someone lives, survives or is fine is
+# unsupported by construction, and wrong as often as it is right.
+FUTURE_SHAPED = re.compile(
+    r"\b(?:"
+    r"still (?:alive|around|there|standing)"
+    r"|survives?\b|survive the|make[s]? it (?:to the end|out)"
+    r"|by the end|in the end|at the end of the (?:show|series|season)"
+    r"|end(?:s|ing)? of the (?:show|series)"
+    r"|(?:show|series|season)\s+(?:ends?|ending)\b"
+    r"|what happens (?:next|later|after)"
+    r"|happens? to .{0,30}\b(?:later|eventually|in the end)"
+    r"|(?:dies?|died|death|killed) (?:later|next|eventually|in the end)"
+    r"|(?:later|eventually) (?:dies?|die|betrays?|leaves?)"
+    # "live" is deliberately absent: "where does Jesse live?" is about a house,
+    # not a fate, and a false refusal costs more than missing a rare phrasing.
+    r"|does .{0,40}\b(?:die|survive|make it)\b"
+    r"|who dies|which characters? dies?"
+    r"|coming up|upcoming (?:twist|death)|biggest twist"
+    r"|spoil(?:er|ers)?\b.{0,20}\b(?:but|is|does)"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def asks_about_the_future(question: str) -> bool:
+    return bool(FUTURE_SHAPED.search(question))
 
 
 def system_prompt(title: str) -> str:
@@ -19,7 +59,10 @@ def system_prompt(title: str) -> str:
         f"watched only up to a certain episode. Use ONLY the episode summaries provided. "
         f"If the answer is not in them, reply exactly: \"{REFUSAL}\" "
         f"Never mention events, characters, or episodes beyond the provided summaries, "
-        f"even if you know the show from elsewhere. Do not hint that more happens later."
+        f"even if you know the show from elsewhere. Do not hint that more happens later. "
+        f"The summaries show what has happened, never what has not: never say that "
+        f"someone is safe, alive, unharmed or still around, and never say that something "
+        f"did not or will not happen. Say only what the summaries show."
     )
 
 
@@ -28,9 +71,17 @@ def answer(
     apply_guard: bool = True,
 ) -> dict:
     work_id = work["id"]
+    guard = core.guard_state(con, work_id)
+
+    # Gate 0, before retrieval spends anything: some questions are about the
+    # future by their shape, and no gated context can answer them.
+    if asks_about_the_future(question):
+        return {"answer": FUTURE_REFUSAL, "provenance": [], "mode": "gated",
+                "tier": work["tier"], "guard": guard, "blocked": [], "model": None,
+                "refused_by": "shape"}
+
     chunks = core.gated_retrieve(con, work_id, gate_abs, question)
     blocklist = core.future_entities(con, work_id, gate_abs)
-    guard = core.guard_state(con, work_id)
     provenance = [core.ep_label(c) for c in chunks]
 
     if not chunks:
@@ -78,4 +129,8 @@ def answer(
 def is_refusal(text: str) -> bool:
     """The model paraphrases the refusal as often as it copies it."""
     lowered = text.lower()
-    return REFUSAL.lower() in lowered or lowered.startswith("i don't know")
+    return (
+        REFUSAL.lower() in lowered
+        or FUTURE_REFUSAL.lower() in lowered
+        or lowered.startswith("i don't know")
+    )
