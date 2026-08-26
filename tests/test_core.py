@@ -52,6 +52,14 @@ def test_guard_catches_leak_word_boundary():
     assert guard_leaks("GUSTAVO FRING arrives", block) == ["Gustavo Fring"]
 
 
+def test_short_names_match_case_sensitively():
+    """A nickname is worth blocking; the everyday word it collides with is not."""
+    assert guard_leaks("They adopt a cat that week.", ["Cat"]) == []
+    assert guard_leaks("Cat refuses to leave.", ["Cat"]) == ["Cat"]
+    # long names stay case-insensitive, since casing varies in generated prose
+    assert guard_leaks("jane margolis calls", ["Jane Margolis"]) == ["Jane Margolis"]
+
+
 def test_fts_query_survives_punctuation():
     q = fts_query('Who is "Gus"? (and why-)')
     assert '"' + "Gus" + '"' in q

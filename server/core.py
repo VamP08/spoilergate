@@ -69,6 +69,59 @@ def gated_units(
     return sorted((dict(r) for r in rows), key=lambda u: u["abs_order"])
 
 
+def gated_entities(con: sqlite3.Connection, work_id: int, gate_abs: int) -> list[dict]:
+    """Characters the viewer has already met. Who exists is itself a spoiler,
+    so this list is gated exactly like everything else. Only people are listed —
+    the post-guard also blocks linked terms, but nobody wants to browse those."""
+    rows = con.execute(
+        "SELECT id, name, first_appearance_abs FROM entities "
+        "WHERE work_id=? AND first_appearance_abs <= ? AND type='character' "
+        "ORDER BY first_appearance_abs, name",
+        (work_id, gate_abs),
+    )
+    return [dict(r) for r in rows]
+
+
+def search_terms(name: str, aliases: str) -> list[str]:
+    """Ways a summary might refer to this character.
+
+    Summaries introduce "Jesse Pinkman" once and say "Jesse" thereafter, so the
+    given name has to be one of the terms. Over-matching is safe here in a way
+    it never is in `guard_leaks`: the worst case is an extra episode of context,
+    where the worst case there is a wrongly refused answer.
+    """
+    terms = [name, *(a for a in aliases.split("|") if a)]
+    given = name.split()[0]
+    if len(given) >= 4 and given not in terms:
+        terms.append(given)
+    return terms
+
+
+def character_units(
+    con: sqlite3.Connection, work_id: int, name: str, aliases: str, gate_abs: int,
+    k: int = 6,
+) -> list[dict]:
+    """Watched episodes that mention this character, most recent k, oldest first."""
+    terms = search_terms(name, aliases)
+    where = " OR ".join(["summary_text LIKE ?"] * len(terms))
+    rows = con.execute(
+        "SELECT abs_order, grouping, number, title, summary_text FROM units "
+        f"WHERE work_id=? AND abs_order <= ? AND ({where}) "
+        "ORDER BY abs_order DESC LIMIT ?",
+        (work_id, gate_abs, *(f"%{t}%" for t in terms), k),
+    )
+    return sorted((dict(r) for r in rows), key=lambda u: u["abs_order"])
+
+
+def guard_state(con: sqlite3.Connection, work_id: int) -> str:
+    """Whether gate 2 exists for this work. Shows whose summaries link nothing
+    get no entity index, so the post-guard has no blocklist and the retrieval
+    gate plus the prompt are all that stand between the model and a spoiler.
+    Say so rather than implying a guarantee that isn't there."""
+    row = con.execute("SELECT 1 FROM entities WHERE work_id=? LIMIT 1", (work_id,)).fetchone()
+    return "armed" if row else "prompt-only"
+
+
 def future_entities(con: sqlite3.Connection, work_id: int, gate_abs: int) -> list[str]:
     """Names the viewer must not hear yet (post-guard blocklist)."""
     names: list[str] = []
@@ -81,13 +134,28 @@ def future_entities(con: sqlite3.Connection, work_id: int, gate_abs: int) -> lis
     return names
 
 
+SHORT_NAME = 5  # below this a name is matched case-sensitively
+
+
+def name_pattern(name: str) -> re.Pattern:
+    """Does this entity name occur in a piece of text?
+
+    The one definition, used both to block a name in an answer and to date it
+    during ingest. If the two ever disagree, a name can be dated from text the
+    guard would not have matched, or blocked on text the dating never saw.
+
+    Word boundaries always. Short names are matched case-sensitively: nicknames
+    like "Gus" or "Red" are worth blocking, but lowercased they collide with
+    ordinary words, and a wrongly refused answer is worse than a rare missed
+    nickname.
+    """
+    flags = 0 if len(name) < SHORT_NAME else re.IGNORECASE
+    return re.compile(rf"(?<!\w){re.escape(name)}(?!\w)", flags)
+
+
 def guard_leaks(answer: str, blocklist: list[str]) -> list[str]:
-    """Future-entity names appearing in the answer. Word-boundary, case-insensitive."""
-    low = answer.lower()
-    return [
-        n for n in blocklist
-        if re.search(rf"(?<![a-z0-9]){re.escape(n.lower())}(?![a-z0-9])", low)
-    ]
+    """Future-entity names appearing in the answer."""
+    return [name for name in blocklist if name_pattern(name).search(answer)]
 
 
 def ep_label(u: dict) -> str:

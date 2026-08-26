@@ -64,19 +64,28 @@ def collect_rows(wikitext: str) -> list[dict]:
 
 
 def parse_summaries(wikitext: str) -> list[dict]:
-    """All {{Episode list}} rows in document order: [{title, summary}]."""
+    """All {{Episode list}} rows in document order: [{title, summary, links}].
+
+    `links` is [(target, display)] kept from the summary before markup is
+    stripped — Wikipedia links a character on first mention, so those links
+    date every character against the episode for free. See ingest/characters.py.
+    """
     code = mwparserfromhell.parse(wikitext)
     rows = []
     for tpl in code.filter_templates():
         if not tpl.name.strip().lower().startswith("episode list"):
             continue
         title = tpl.get("Title").value.strip_code().strip() if tpl.has("Title") else ""
-        summary = (
-            tpl.get("ShortSummary").value.strip_code().strip()
-            if tpl.has("ShortSummary")
-            else ""
-        )
-        rows.append({"title": title.strip('"'), "summary": summary})
+        links: list[tuple[str, str | None]] = []
+        summary = ""
+        if tpl.has("ShortSummary"):
+            value = tpl.get("ShortSummary").value
+            links = [
+                (str(link.title).strip(), str(link.text).strip() if link.text else None)
+                for link in value.filter_wikilinks()
+            ]
+            summary = value.strip_code().strip()
+        rows.append({"title": title.strip('"'), "summary": summary, "links": links})
     return rows
 
 
@@ -94,5 +103,7 @@ def match_to_spine(spine: list[dict], rows: list[dict]) -> list[dict]:
 
     out = []
     for ep, row in pairs:
-        out.append({**ep, "summary": (row or {}).get("summary", "")})
+        out.append({**ep,
+                    "summary": (row or {}).get("summary", ""),
+                    "links": (row or {}).get("links", [])})
     return out

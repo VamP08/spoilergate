@@ -4,6 +4,7 @@ import pytest
 
 from ingest.build_db import SCHEMA
 from server import cache, core
+from server.core import search_terms
 
 
 @pytest.fixture
@@ -39,6 +40,20 @@ def test_cache_roundtrip(tmp_path, monkeypatch):
     assert cache.get("recap:1:5:25") == "the recap"
     cache.put("recap:1:5:25", "rewritten")
     assert cache.get("recap:1:5:25") == "rewritten"
+
+
+def test_search_terms_add_the_given_name():
+    assert search_terms("Jesse Pinkman", "") == ["Jesse Pinkman", "Jesse"]
+    assert search_terms("Gustavo Fring", "Gus|Gus Fring") == [
+        "Gustavo Fring", "Gus", "Gus Fring", "Gustavo"]
+    # a short given name would match inside other words under LIKE
+    assert search_terms("Gus Fring", "") == ["Gus Fring"]
+
+
+def test_character_units_finds_given_name_mentions(con):
+    con.execute("UPDATE units SET summary_text='Jesse hides the evidence.' WHERE abs_order=2")
+    found = core.character_units(con, 1, "Jesse Pinkman", "", gate_abs=5)
+    assert [u["abs_order"] for u in found] == [2]
 
 
 def test_search_hides_shows_with_no_summaries(con):

@@ -33,6 +33,8 @@
   <textarea id="question" rows="2" placeholder="Your question…"></textarea>
   <button id="ask">Ask</button>
   <button id="recap">Previously on…</button>
+  <button id="chars">Characters</button>
+  <div id="charlist"></div>
   <div class="trust" id="trustline"></div>
   <div id="answer" class="hidden"></div>
   <div class="prov" id="prov"></div>
@@ -115,7 +117,11 @@ async function post(url, body, field) {
     body: JSON.stringify({ work_id: work.id, gate_abs: gateAbs(), ...body }),
   })).json();
   $('answer').textContent = res[field];
-  $('prov').textContent = res.provenance?.length ? `Based on: ${res.provenance.join(', ')}` : '';
+  const based = res.provenance?.length ? `Based on: ${res.provenance.join(', ')}` : '';
+  const guard = res.guard === 'prompt-only'
+    ? ' · no character index for this show yet, so the retrieval gate is the only hard check'
+    : '';
+  $('prov').textContent = based + guard;
 }
 
 $('ask').addEventListener('click', () => {
@@ -124,6 +130,23 @@ $('ask').addEventListener('click', () => {
 });
 
 $('recap').addEventListener('click', () => post('/api/recap', {}, 'recap'));
+
+$('chars').addEventListener('click', async () => {
+  if (!work) return;
+  const list = await (await fetch(
+    `/api/works/${work.id}/characters?gate_abs=${gateAbs()}`)).json();
+  $('charlist').innerHTML = '';
+  if (!list.length) {
+    $('charlist').textContent = "No characters indexed for this show yet.";
+    return;
+  }
+  for (const c of list) {
+    const b = document.createElement('button');
+    b.textContent = c.name;
+    b.onclick = () => post('/api/character', { entity_id: c.id }, 'profile');
+    $('charlist').appendChild(b);
+  }
+});
 </script>
 </body>
 </html>

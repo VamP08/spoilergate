@@ -30,6 +30,18 @@ def fetch_show_index() -> list[dict]:
         time.sleep(0.6)
 
 
+def fetch_cast(show_id: int) -> list[str]:
+    """Billed character names, e.g. "Gustavo 'Gus' Fring". Empty on failure —
+    entity extraction still has the wikilink source to fall back on."""
+    try:
+        r = httpx.get(f"{BASE}/shows/{show_id}/cast", timeout=30)
+        r.raise_for_status()
+        time.sleep(0.6)
+        return [c["character"]["name"] for c in r.json() if not c.get("self")]
+    except (httpx.HTTPError, KeyError):
+        return []
+
+
 def fetch_episodes(show_id: int) -> list[dict]:
     """Regular episodes only, in airing order. abs_order assigned by position."""
     r = httpx.get(f"{BASE}/shows/{show_id}/episodes", timeout=30)

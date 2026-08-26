@@ -49,6 +49,7 @@ def ask(req: AskRequest):
             raise HTTPException(404, "unknown work")
         chunks = core.gated_retrieve(con, req.work_id, req.gate_abs, req.question)
         blocklist = core.future_entities(con, req.work_id, req.gate_abs)
+        guard = core.guard_state(con, req.work_id)
 
     if not chunks:
         return {"answer": REFUSAL, "provenance": [], "mode": "gated", "tier": work["tier"]}
@@ -97,6 +98,7 @@ def ask(req: AskRequest):
         "provenance": [core.ep_label(c) for c in chunks],
         "mode": "gated",
         "tier": work["tier"],
+        "guard": guard,
         "gate_label": label,
     }
 
@@ -150,6 +152,65 @@ def recap(req: RecapRequest):
 
     cache.put(key, text)
     return {"recap": text, "provenance": provenance, "mode": "gated"}
+
+
+class CharacterRequest(BaseModel):
+    work_id: int
+    gate_abs: int
+    entity_id: int
+
+
+@app.get("/api/works/{work_id}/characters")
+def characters(work_id: int, gate_abs: int):
+    with core.connect() as con:
+        return core.gated_entities(con, work_id, gate_abs)
+
+
+@app.post("/api/character")
+def character(req: CharacterRequest):
+    with core.connect() as con:
+        work = con.execute("SELECT * FROM works WHERE id=?", (req.work_id,)).fetchone()
+        row = con.execute(
+            "SELECT name, aliases, first_appearance_abs FROM entities WHERE id=? AND work_id=?",
+            (req.entity_id, req.work_id),
+        ).fetchone()
+        # Meta-spoiler rule: a character the viewer has not met is answered
+        # exactly like one that does not exist.
+        if not work or not row or row["first_appearance_abs"] > req.gate_abs:
+            raise HTTPException(404, "unknown character")
+        units = core.character_units(
+            con, req.work_id, row["name"], row["aliases"], req.gate_abs
+        )
+        blocklist = core.future_entities(con, req.work_id, req.gate_abs)
+
+    provenance = [core.ep_label(u) for u in units]
+    context = "\n\n".join(f"[{core.ep_label(u)}] {u['summary_text']}" for u in units)
+    key = f"char:{req.entity_id}:{req.gate_abs}"
+
+    cached = cache.get(key)
+    if cached:
+        return {"name": row["name"], "profile": cached, "provenance": provenance,
+                "mode": "cached"}
+
+    profile = llm.chat([
+        {"role": "system", "content":
+            f"Describe {row['name']} from {work['title']} for a viewer who has watched exactly "
+            f"the episodes summarised below and no further. Who they are, what they want, where "
+            f"they stand now. Use ONLY these summaries — never anything you know about the show "
+            f"from elsewhere, and never hint that more is coming. Under 150 words, no preamble."},
+        {"role": "user", "content": context},
+    ], max_tokens=1000)
+
+    if profile is None:
+        return {"name": row["name"], "profile": "AI is unavailable — here is where they appear:"
+                                                f"\n\n{context}",
+                "provenance": provenance, "mode": "extractive"}
+
+    if core.guard_leaks(profile, blocklist):
+        profile = "Couldn't build a spoiler-safe profile at this position."
+
+    cache.put(key, profile)
+    return {"name": row["name"], "profile": profile, "provenance": provenance, "mode": "gated"}
 
 
 web_dir = Path(__file__).resolve().parent.parent / "web"

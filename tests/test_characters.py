@@ -1,0 +1,147 @@
+from ingest.characters import (
+    cast_variants,
+    clean_target,
+    entities_from_cast,
+    entities_from_units,
+    is_person,
+    merge_entities,
+    redate_by_text,
+)
+from ingest.wikipedia import parse_summaries
+
+UNITS = [
+    {"abs_order": 2, "links": [("Helena Eagan", "Helly"), ("lactation consultant", None)]},
+    {"abs_order": 1, "links": [("Mark Scout", None), ("Helena Eagan", None),
+                               ("Microchip implant (human)", "implanting a microchip")]},
+    {"abs_order": 3, "links": [("Seth Milchick", None), ("Mark Scout", "Mark")]},
+]
+
+
+def test_clean_target_drops_disambiguation_and_anchors():
+    assert clean_target("Walter White (Breaking Bad)") == "Walter White"
+    assert clean_target("Jesse Pinkman#Season 2") == "Jesse Pinkman"
+    assert clean_target("Mark Scout") == "Mark Scout"
+
+
+def test_is_person_separates_names_from_terms():
+    assert is_person("Mark Scout")
+    assert is_person("Jean-Luc Picard")
+    assert not is_person("lactation consultant")
+    assert not is_person("Board of directors")   # lowercase after first word
+    assert not is_person("Diethyl ether")
+    assert not is_person("Albuquerque")          # single word
+    assert not is_person("Albuquerque, New Mexico")
+
+
+def test_first_appearance_is_earliest_link_regardless_of_input_order():
+    by_name = {e["name"]: e for e in entities_from_units(UNITS)}
+    assert by_name["Mark Scout"]["first_appearance_abs"] == 1
+    assert by_name["Helena Eagan"]["first_appearance_abs"] == 1  # not the ep 2 mention
+    assert by_name["Seth Milchick"]["first_appearance_abs"] == 3
+
+
+def test_terms_are_kept_but_tagged_separately():
+    ents = {e["name"]: e["type"] for e in entities_from_units(UNITS)}
+    assert ents["Mark Scout"] == "character"
+    assert ents["lactation consultant"] == "term"
+    assert ents["Microchip implant"] == "term"  # parenthetical stripped
+
+
+def test_aliases_come_from_link_display_text():
+    by_name = {e["name"]: e for e in entities_from_units(UNITS)}
+    assert by_name["Helena Eagan"]["aliases"] == "Helly"
+    assert by_name["Mark Scout"]["aliases"] == "Mark"
+
+
+def test_lowercase_display_text_is_not_an_alias():
+    """[[Walter White|his father]] must not blocklist the phrase 'his father'."""
+    units = [{"abs_order": 1, "links": [("Walter White", "his father")]}]
+    assert entities_from_units(units)[0]["aliases"] == ""
+
+
+def test_terms_never_get_aliases():
+    units = [{"abs_order": 1, "links": [("Board of directors", "Board")]}]
+    assert entities_from_units(units)[0]["aliases"] == ""
+
+
+WIKITEXT = """
+{{Episode list
+ | Title = Good News
+ | ShortSummary = [[Mark Scout|Mark]] meets [[Helena Eagan|Helly]] at [[Lumon Industries]].
+}}
+"""
+
+
+def test_cast_variants_splits_the_embedded_nickname():
+    assert cast_variants("Gustavo 'Gus' Fring") == ("Gustavo Fring", ["Gus Fring", "Gus"])
+    assert cast_variants("Walter White") == ("Walter White", [])
+    assert cast_variants("Michael 'Mike' Ehrmantraut")[1] == ["Mike Ehrmantraut", "Mike"]
+
+
+def test_cast_dated_by_any_variant():
+    units = [
+        (1, "Walter White cooks."),
+        (2, "Gus Fring runs a restaurant."),   # nickname form, not the primary
+        (3, "Gustavo Fring makes an offer."),
+    ]
+    found = {e["name"]: e for e in entities_from_cast(
+        ["Walter White", "Gustavo 'Gus' Fring", "Never Mentioned"], units)}
+    assert found["Walter White"]["first_appearance_abs"] == 1
+    assert found["Gustavo Fring"]["first_appearance_abs"] == 2
+    assert found["Gustavo Fring"]["aliases"] == "Gus Fring|Gus"
+    assert "Never Mentioned" not in found  # unmentioned cast is undatable, so dropped
+
+
+def test_merge_takes_earliest_appearance_and_unions_aliases():
+    links = [{"name": "Gustavo Fring", "aliases": "Gus", "type": "term",
+              "first_appearance_abs": 5}]
+    cast = [{"name": "Gustavo Fring", "aliases": "Gus Fring", "type": "character",
+             "first_appearance_abs": 2}]
+    merged = merge_entities(links, cast)
+    assert len(merged) == 1
+    assert merged[0]["first_appearance_abs"] == 2       # earliest wins
+    assert merged[0]["type"] == "character"             # character beats term
+    assert merged[0]["aliases"] == "Gus|Gus Fring"
+
+
+def test_merge_folds_an_entity_that_is_another_ones_alias():
+    """Wikipedia links 'Gus Fring'; TVMaze bills 'Gustavo Fring' with that alias."""
+    links = [{"name": "Gus Fring", "aliases": "", "type": "character",
+              "first_appearance_abs": 11}]
+    cast = [{"name": "Gustavo Fring", "aliases": "Gus Fring|Gus", "type": "character",
+             "first_appearance_abs": 12}]
+    merged = merge_entities(links, cast)
+    assert [e["name"] for e in merged] == ["Gustavo Fring"]
+    assert merged[0]["first_appearance_abs"] == 11
+    assert "Gus Fring" in merged[0]["aliases"]  # folded name still blocked
+    assert "Gus" in merged[0]["aliases"].split("|")
+
+
+def test_redate_pulls_back_to_first_plain_text_mention():
+    """The real bug this fixes: 'marijuana' is linked in ep 9 but written in ep 3,
+    so the guard blocked a word already sitting in gated context."""
+    ents = [{"name": "marijuana", "aliases": "", "type": "term",
+             "first_appearance_abs": 9}]
+    units = [(1, "Nothing here."), (3, "Hank talks about marijuana."), (9, "Linked at last.")]
+    assert redate_by_text(ents, units)[0]["first_appearance_abs"] == 3
+
+
+def test_redate_uses_aliases_too():
+    ents = [{"name": "Gustavo Fring", "aliases": "Gus", "type": "character",
+             "first_appearance_abs": 12}]
+    units = [(5, "A man called Gus watches."), (12, "Gustavo Fring appears.")]
+    assert redate_by_text(ents, units)[0]["first_appearance_abs"] == 5
+
+
+def test_redate_never_pushes_a_date_later():
+    ents = [{"name": "Jane Margolis", "aliases": "", "type": "character",
+             "first_appearance_abs": 4}]
+    units = [(4, "Jane Margolis moves in."), (9, "Jane Margolis again.")]
+    assert redate_by_text(ents, units)[0]["first_appearance_abs"] == 4
+
+
+def test_links_survive_summary_parsing():
+    row = parse_summaries(WIKITEXT)[0]
+    assert row["summary"] == "Mark meets Helly at Lumon Industries."  # markup stripped
+    assert ("Mark Scout", "Mark") in row["links"]
+    assert ("Helena Eagan", "Helly") in row["links"]

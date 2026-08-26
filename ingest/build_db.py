@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from ingest import tvmaze, wikipedia
+from ingest import characters, tvmaze, wikipedia
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "spoilergate.db"
 
@@ -64,6 +64,7 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path)
     con.execute("PRAGMA journal_mode=WAL")  # server can read while a bulk ingest writes
+    con.execute("PRAGMA busy_timeout=15000")  # two ingest passes can overlap; queue, don't fail
     con.executescript(SCHEMA)
     return con
 
@@ -111,6 +112,8 @@ def ingest_show(con: sqlite3.Connection, query: str | dict) -> None:
         cur.execute("INSERT INTO units_fts(rowid, summary_text) VALUES(?,?)",
                     (cur.lastrowid, u["summary"]))
     con.commit()
+    if with_summary:
+        write_entities(con, work_id, units, tvmaze.fetch_cast(show["id"]))
 
 
 INDEX_PATH = DB_PATH.parent / "tvmaze_ranked.json"
@@ -151,13 +154,73 @@ def ingest_popular(con: sqlite3.Connection, top: int) -> None:
     print(f"done: ingested {done}, failed {failed}, skipped {skipped}")
 
 
+def write_entities(con: sqlite3.Connection, work_id: int, units: list[dict],
+                   cast: list[str] = ()) -> int:
+    """Replace this work's entities: wikilinks give guests and terms, the billed
+    cast gives the leads the episode tables never link."""
+    text_units = [(u["abs_order"], u.get("summary", "")) for u in units]
+    from_cast = characters.entities_from_cast(list(cast), text_units)
+    found = characters.redate_by_text(
+        characters.merge_entities(characters.entities_from_units(units), from_cast),
+        text_units,
+    )
+    con.execute("DELETE FROM entities WHERE work_id=?", (work_id,))
+    con.executemany(
+        "INSERT INTO entities(work_id, name, aliases, type, first_appearance_abs) "
+        "VALUES(?,?,?,?,?)",
+        [(work_id, e["name"], e["aliases"], e["type"], e["first_appearance_abs"])
+         for e in found],
+    )
+    con.commit()
+    return len(found)
+
+
+def entities_pass(con: sqlite3.Connection) -> None:
+    """Re-derive entities for shows ingested before links were captured.
+
+    New ingests write entities inline; this refetches the episode page for the
+    rest, and can be rerun whenever the link heuristics improve.
+    """
+    works = con.execute(
+        "SELECT id, title, wikipedia_page, tvmaze_id FROM works WHERE tier='shallow' "
+        "AND wikipedia_page != '' AND id NOT IN (SELECT DISTINCT work_id FROM entities) "
+        "ORDER BY id"
+    ).fetchall()
+    print(f"entities pass: {len(works)} shows")
+    for i, (work_id, title, page, tvmaze_id) in enumerate(works, 1):
+        try:
+            stored = [
+                {"abs_order": r[0], "title": r[1], "summary": r[2]}
+                for r in con.execute(
+                    "SELECT abs_order, title, summary_text FROM units "
+                    "WHERE work_id=? ORDER BY abs_order",
+                    (work_id,),
+                )
+            ]
+            text = wikipedia.fetch_wikitext(page)
+            rows = wikipedia.collect_rows(text) if text else []
+            units = wikipedia.match_to_spine(stored, rows)
+            # match_to_spine overwrites summaries with the freshly parsed ones;
+            # keep the stored text so cast dating works even if a row fails to match.
+            for unit, saved in zip(units, stored):
+                unit["summary"] = unit["summary"] or saved["summary"]
+            n = write_entities(con, work_id, units, tvmaze.fetch_cast(tvmaze_id))
+            chars = sum(1 for e in characters.entities_from_units(units)
+                        if e["type"] == "character")
+            print(f"[{i}/{len(works)}] {title}: {n} entities ({chars} linked characters)")
+        except Exception as e:
+            print(f"[{i}/{len(works)}] FAILED {title}: {type(e).__name__}: {e}")
+
+
 def main() -> None:
     args = sys.argv[1:]
     if not args:
-        sys.exit("usage: python -m ingest.build_db <show name> [...] | --top N")
+        sys.exit("usage: python -m ingest.build_db <show name> [...] | --top N | --entities")
     con = connect()
     if args[0] == "--top":
         ingest_popular(con, int(args[1]))
+    elif args[0] == "--entities":
+        entities_pass(con)
     else:
         for q in args:
             ingest_show(con, q)
