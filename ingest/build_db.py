@@ -22,6 +22,18 @@ CREATE TABLE IF NOT EXISTS works(
     wikipedia_page TEXT,
     tier TEXT NOT NULL DEFAULT 'shallow'
 );
+CREATE TABLE IF NOT EXISTS artwork(
+    work_id INTEGER PRIMARY KEY REFERENCES works(id),
+    -- Hotlinked from TVMaze's CDN, never copied here: their licence covers the
+    -- metadata, not the images, and their admins are explicit that linking
+    -- keeps takedown responsibility with them while mirroring moves it to us.
+    poster_url TEXT DEFAULT '',
+    network TEXT DEFAULT '',
+    premiered TEXT DEFAULT '',
+    genres TEXT DEFAULT '',
+    rating REAL,
+    tvmaze_url TEXT DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS units(
     id INTEGER PRIMARY KEY,
     work_id INTEGER NOT NULL REFERENCES works(id),
@@ -216,6 +228,52 @@ def entities_pass(con: sqlite3.Connection) -> None:
             print(f"[{i}/{len(works)}] FAILED {title}: {type(e).__name__}: {e}")
 
 
+def write_artwork(con: sqlite3.Connection, work_id: int, show: dict) -> None:
+    """Store the poster URL and the presentation metadata beside it.
+
+    Only URLs and CC BY-SA metadata land here — the images themselves stay on
+    TVMaze's CDN and are hotlinked by the page.
+    """
+    image = show.get("image") or {}
+    con.execute(
+        "INSERT INTO artwork(work_id, poster_url, network, premiered, genres, rating, "
+        "tvmaze_url) VALUES(?,?,?,?,?,?,?) ON CONFLICT(work_id) DO UPDATE SET "
+        "poster_url=excluded.poster_url, network=excluded.network, "
+        "premiered=excluded.premiered, genres=excluded.genres, rating=excluded.rating, "
+        "tvmaze_url=excluded.tvmaze_url",
+        (
+            work_id,
+            image.get("medium") or image.get("original") or "",
+            ((show.get("network") or show.get("webChannel") or {}).get("name")) or "",
+            (show.get("premiered") or "")[:4],
+            "|".join(show.get("genres") or []),
+            (show.get("rating") or {}).get("average"),
+            show.get("url") or "",
+        ),
+    )
+
+
+def artwork_pass(con: sqlite3.Connection) -> None:
+    """Fetch posters for every show that can answer something."""
+    works = con.execute(
+        "SELECT id, tvmaze_id, title FROM works WHERE tier != 'empty' "
+        "AND id NOT IN (SELECT work_id FROM artwork) ORDER BY id"
+    ).fetchall()
+    print(f"artwork pass: {len(works)} shows")
+    posters = 0
+    for i, (work_id, tvmaze_id, title) in enumerate(works, 1):
+        try:
+            show = tvmaze.fetch_show_by_id(tvmaze_id)
+            write_artwork(con, work_id, show)
+            con.commit()
+            posters += bool((show.get("image") or {}).get("medium"))
+        except Exception as e:
+            print(f"[{i}/{len(works)}] FAILED {title}: {type(e).__name__}: {e}")
+        if i % 50 == 0:
+            print(f"--- {i}/{len(works)} ({posters} with a poster)")
+    print(f"done: {posters} posters over {len(works)} shows")
+
+
 def main() -> None:
     args = sys.argv[1:]
     if not args:
@@ -225,6 +283,8 @@ def main() -> None:
         ingest_popular(con, int(args[1]))
     elif args[0] == "--entities":
         entities_pass(con)
+    elif args[0] == "--artwork":
+        artwork_pass(con)
     else:
         for q in args:
             ingest_show(con, q)

@@ -32,6 +32,13 @@ def fetch_show_index() -> list[dict]:
         time.sleep(0.6)
 
 
+def fetch_show_by_id(show_id: int) -> dict:
+    r = http.get(f"{BASE}/shows/{show_id}", timeout=30)
+    r.raise_for_status()
+    time.sleep(0.55)  # 20 calls / 10s is the documented limit
+    return r.json()
+
+
 def fetch_cast(show_id: int) -> list[str]:
     """Billed character names, e.g. "Gustavo 'Gus' Fring". Empty on failure —
     entity extraction still has the wikilink source to fall back on."""

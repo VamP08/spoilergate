@@ -32,6 +32,15 @@ def works(q: str = ""):
         return core.search_works(con, q)
 
 
+@app.get("/api/works/{work_id}")
+def work(work_id: int):
+    with core.connect() as con:
+        detail = core.work_detail(con, work_id)
+    if detail is None or not detail["units"]:
+        raise HTTPException(404, "unknown work")
+    return detail
+
+
 @app.get("/api/works/{work_id}/units")
 def units(work_id: int):
     with core.connect() as con:

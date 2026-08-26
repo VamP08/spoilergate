@@ -3,170 +3,502 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SpoilerGate</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔒</text></svg>">
+<title>SpoilerGate — answers that stop where you did</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230A0D13'/><rect x='46' y='14' width='8' height='72' fill='%23F5B942'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-  body { max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.4rem; }
-  input, select, button, textarea { font: inherit; padding: .5rem; margin: .25rem 0; }
-  input, textarea { width: 100%; box-sizing: border-box; }
-  #answer { white-space: pre-wrap; border: 1px solid #8884; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
-  .trust { font-size: .85rem; opacity: .75; margin-top: .5rem; }
-  .prov { font-size: .85rem; opacity: .75; }
-  #results button { display: block; width: 100%; text-align: left; }
-  .hidden { display: none; }
+  :root {
+    --ink:      #0A0D13;
+    --ink-2:    #121722;
+    --ink-3:    #1B2230;
+    --signal:   #F5B942;   /* projector amber: the position marker */
+    --signal-d: rgba(245, 185, 66, .13);
+    --unseen:   #232C3C;
+    --text:     #EAECEF;
+    --muted:    #8B94A6;
+    --line:     rgba(255, 255, 255, .08);
+    --display: "Instrument Serif", Georgia, "Times New Roman", serif;
+    --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 22px; }
+
+  /* ── top bar ─────────────────────────────────────────────── */
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(10, 13, 19, .86);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .bar { display: flex; align-items: center; gap: 22px; padding: 14px 0; }
+
+  .mark {
+    font-family: var(--display); font-size: 25px; letter-spacing: .01em;
+    display: flex; align-items: center; gap: 9px; white-space: nowrap;
+    cursor: pointer; background: none; border: 0; color: var(--text); padding: 0;
+  }
+  .mark i { width: 3px; height: 22px; background: var(--signal); display: block; }
+
+  .search { flex: 1; position: relative; max-width: 460px; }
+  .search input {
+    width: 100%; padding: 10px 14px;
+    background: var(--ink-2); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--text); font: inherit;
+  }
+  .search input::placeholder { color: var(--muted); }
+  .search input:focus { outline: 2px solid var(--signal); outline-offset: 1px; border-color: transparent; }
+
+  /* ── opening statement ───────────────────────────────────── */
+  .intro { padding: 68px 0 40px; max-width: 620px; }
+  .intro h1 {
+    font-family: var(--display); font-weight: 400;
+    font-size: clamp(38px, 6.5vw, 62px); line-height: 1.06; margin: 0 0 18px;
+  }
+  .intro h1 em { font-style: italic; color: var(--signal); }
+  .intro p { color: var(--muted); font-size: 17px; margin: 0; }
+
+  /* ── poster grid ─────────────────────────────────────────── */
+  .shelf-head {
+    font-size: 12px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--muted); padding-bottom: 14px;
+  }
+  .grid {
+    display: grid; gap: 18px;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    padding-bottom: 40px;
+  }
+  .card {
+    background: none; border: 0; padding: 0; color: inherit; cursor: pointer;
+    text-align: left; font: inherit;
+  }
+  .card .art {
+    aspect-ratio: 2 / 3; width: 100%; border-radius: 8px; overflow: hidden;
+    background: var(--ink-3); border: 1px solid var(--line);
+    display: grid; place-items: center; position: relative;
+    transition: transform .18s ease, border-color .18s ease;
+  }
+  .card:hover .art, .card:focus-visible .art {
+    transform: translateY(-4px); border-color: var(--signal);
+  }
+  .card:focus-visible { outline: none; }
+  .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* Fallback when TVMaze has no image: the title, set well. */
+  .card .letters {
+    font-family: var(--display); font-size: 30px; color: var(--muted);
+    padding: 14px; text-align: center; line-height: 1.1;
+  }
+  .card b { display: block; font-weight: 500; font-size: 14px; margin-top: 9px; }
+  .card span { color: var(--muted); font-size: 12.5px; font-family: var(--mono); }
+
+  /* ── show view ───────────────────────────────────────────── */
+  .show { padding: 34px 0 20px; display: flex; gap: 28px; align-items: flex-start; }
+  .show .poster {
+    width: 168px; flex: none; aspect-ratio: 2/3; border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--line); background: var(--ink-3);
+  }
+  .show .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .show h2 {
+    font-family: var(--display); font-weight: 400; font-size: clamp(30px, 4.6vw, 46px);
+    margin: 0 0 6px; line-height: 1.08;
+  }
+  .facts { color: var(--muted); font-size: 13.5px; font-family: var(--mono); margin-bottom: 22px; }
+
+  /* ── the gate: signature element ─────────────────────────── */
+  /* The information column stays narrow so the track reads as a deliberate
+     object rather than drifting in empty space. */
+  .col { flex: 1; min-width: 0; max-width: 620px; }
+
+  .track { margin-bottom: 8px; }
+  .track-head {
+    font-size: 12px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 9px;
+  }
+  .season { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .season > i {
+    font-style: normal; font-family: var(--mono); font-size: 11px; color: var(--muted);
+    width: 26px; flex: none;
+  }
+  .eps { display: flex; gap: 3px; flex-wrap: wrap; }
+  .ep {
+    width: 15px; height: 22px; border-radius: 2px; border: 0; padding: 0;
+    background: var(--signal-d); cursor: pointer;
+    box-shadow: inset 0 -2px 0 rgba(245, 185, 66, .55);
+    transition: background .14s ease, transform .14s ease;
+  }
+  .ep:hover { transform: scaleY(1.15); background: rgba(245, 185, 66, .3); }
+  .ep:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  /* past the position: present but unreadable — the gate made visible */
+  .ep.beyond {
+    background: repeating-linear-gradient(
+      135deg, var(--unseen) 0 3px, transparent 3px 6px);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .05);
+  }
+  .ep.beyond:hover { background: var(--unseen); }
+  .ep.here {
+    background: var(--signal); box-shadow: 0 0 0 2px rgba(245, 185, 66, .28);
+  }
+
+  .gateline {
+    display: flex; align-items: center; gap: 10px; margin: 16px 0 22px;
+    color: var(--muted); font-size: 13px;
+  }
+  .gateline::before {
+    content: ""; width: 3px; align-self: stretch; background: var(--signal);
+    border-radius: 2px; flex: none;
+  }
+
+  /* ── actions ─────────────────────────────────────────────── */
+  .ask-row { display: flex; gap: 9px; flex-wrap: wrap; margin-bottom: 12px; }
+  .ask-row input {
+    flex: 1; min-width: 220px; padding: 11px 14px;
+    background: var(--ink-2); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--text); font: inherit;
+  }
+  .ask-row input:focus { outline: 2px solid var(--signal); outline-offset: 1px; }
+  button.act {
+    padding: 11px 16px; border-radius: 8px; cursor: pointer; font: inherit;
+    background: var(--ink-2); color: var(--text); border: 1px solid var(--line);
+    transition: border-color .15s ease, color .15s ease;
+  }
+  button.act:hover { border-color: var(--signal); color: var(--signal); }
+  button.act.primary { background: var(--signal); color: #17120A; border-color: var(--signal); font-weight: 600; }
+  button.act.primary:hover { filter: brightness(1.08); color: #17120A; }
+  button.act:disabled { opacity: .5; cursor: default; }
+
+  .cast { display: flex; gap: 7px; flex-wrap: wrap; margin: 4px 0 14px; }
+  .cast button {
+    padding: 6px 11px; font-size: 13px; border-radius: 999px; cursor: pointer;
+    background: var(--ink-3); color: var(--muted); border: 1px solid var(--line); font: inherit;
+  }
+  .cast button:hover { color: var(--signal); border-color: var(--signal); }
+
+  /* ── answer ──────────────────────────────────────────────── */
+  .answer {
+    background: var(--ink-2); border: 1px solid var(--line);
+    border-left: 3px solid var(--signal);
+    border-radius: 4px 10px 10px 4px; padding: 20px 22px; margin-bottom: 34px;
+  }
+  .answer h3 {
+    margin: 0 0 10px; font-family: var(--display); font-weight: 400; font-size: 22px;
+  }
+  .answer p { margin: 0; white-space: pre-wrap; }
+  .prov {
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+  }
+  .prov b { color: var(--signal); font-weight: 500; }
+
+  .note { color: var(--muted); font-size: 13.5px; padding: 8px 0 30px; }
+
+  footer {
+    border-top: 1px solid var(--line); margin-top: 30px; padding: 26px 0 40px;
+    color: var(--muted); font-size: 12.5px; line-height: 1.8;
+  }
+  footer a { color: var(--muted); }
+
+  .hidden { display: none !important; }
+
+  @media (max-width: 620px) {
+    .show { flex-direction: column; gap: 18px; }
+    .show .poster { width: 118px; }
+    .bar { flex-wrap: wrap; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
 </style>
 </head>
 <body>
-<h1>SpoilerGate</h1>
-<p>Ask anything about a show — answers use only what you've already watched.</p>
 
-<input id="search" placeholder="Search a show (e.g. Breaking Bad)…" autocomplete="off">
-<div id="results"></div>
+<header>
+  <div class="wrap bar">
+    <button class="mark" id="home"><i></i>SpoilerGate</button>
+    <div class="search">
+      <input id="search" type="search" placeholder="Search a show…" autocomplete="off"
+             aria-label="Search a show">
+    </div>
+  </div>
+</header>
 
-<div id="picker" class="hidden">
-  <p>I'm about to watch:
-    <select id="season"></select>
-    <select id="episode"></select>
-  </p>
-  <textarea id="question" rows="2" placeholder="Your question…"></textarea>
-  <button id="ask">Ask</button>
-  <button id="recap">Previously on…</button>
-  <button id="chars">Characters</button>
-  <div id="charlist"></div>
-  <div class="trust" id="trustline"></div>
-  <div id="answer" class="hidden"></div>
-  <div class="prov" id="prov"></div>
-</div>
+<main class="wrap">
+  <section class="intro" id="intro">
+    <h1>Ask anything.<br>Learn <em>nothing</em> you haven't earned.</h1>
+    <p>Tell it where you are in a show and ask away. Every answer is built only from
+       episodes you've already watched — enforced by what the search can reach, not by
+       asking a model to keep quiet.</p>
+  </section>
+
+  <div class="shelf-head hidden" id="shelfHead">Ready to ask about</div>
+  <section class="grid hidden" id="grid"></section>
+  <p class="note hidden" id="note"></p>
+
+  <section class="hidden" id="show">
+    <div class="show">
+      <div class="poster" id="poster"></div>
+      <div class="col">
+        <h2 id="title"></h2>
+        <div class="facts" id="facts"></div>
+
+        <div class="track">
+          <div class="track-head">Where you are</div>
+          <div id="seasons"></div>
+        </div>
+        <div class="gateline" id="gateline"></div>
+
+        <div class="ask-row">
+          <input id="question" placeholder="Who is she working for?" aria-label="Your question">
+          <button class="act primary" id="ask">Ask</button>
+        </div>
+        <div class="ask-row">
+          <button class="act" id="recap">Previously on…</button>
+          <button class="act" id="chars">Who I've met</button>
+        </div>
+        <div class="cast" id="castList"></div>
+      </div>
+    </div>
+    <div class="answer hidden" id="answer">
+      <h3 id="answerTitle"></h3>
+      <p id="answerBody"></p>
+      <div class="prov hidden" id="prov"></div>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <div>Show data and posters from <a href="https://www.tvmaze.com" target="_blank"
+     rel="noopener">TVmaze</a> (CC BY-SA). Episode summaries from
+     <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a> (CC BY-SA).</div>
+  <div>Poster images remain the property of their respective networks and studios.</div>
+</footer>
 
 <script>
-let work = null, units = [];
-
 const $ = id => document.getElementById(id);
+const api = (path, body) => fetch(path, body ? {
+  method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+} : undefined);
 
-$('search').addEventListener('input', async e => {
+let work = null;      // full detail of the selected show
+let position = 1;     // abs_order of the episode the viewer is ABOUT to watch
+
+const gate = () => position - 1;   // everything strictly before it is fair game
+const store = () => JSON.parse(localStorage.getItem('spoilergate') || '{}');
+const epCode = u => `S${String(u.grouping).padStart(2, '0')}E${String(u.number).padStart(2, '0')}`;
+
+/* ── search ──────────────────────────────────────────────── */
+let searchTimer;
+$('search').addEventListener('input', e => {
+  clearTimeout(searchTimer);
   const q = e.target.value.trim();
-  if (q.length < 2) { $('results').innerHTML = ''; return; }
-  const works = await (await fetch(`/api/works?q=${encodeURIComponent(q)}`)).json();
-  if (q !== $('search').value.trim()) return;  // stale response, a newer request is in flight
-  $('results').innerHTML = '';
-  if (!works.length) {
-    const b = document.createElement('button');
-    b.textContent = `Index "${q}" now (a few seconds)`;
-    b.onclick = async () => {
-      b.disabled = true;
-      b.textContent = `Indexing "${q}"…`;
-      const res = await fetch('/api/index', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ query: q }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        b.textContent = err.detail || "Couldn't index that one";
-        return;
-      }
-      selectWork(await res.json());
-    };
-    $('results').appendChild(b);
-    return;
-  }
-  for (const w of works) {
-    const b = document.createElement('button');
-    b.textContent = w.title;
-    b.onclick = () => selectWork(w);
-    $('results').appendChild(b);
-  }
+  searchTimer = setTimeout(() => runSearch(q), 220);
 });
 
-async function selectWork(w) {
-  work = w;
-  $('results').innerHTML = '';
-  $('search').value = w.title;
-  units = await (await fetch(`/api/works/${w.id}/units`)).json();
-  const seasons = [...new Set(units.map(u => u.grouping))];
-  $('season').innerHTML = seasons.map(s => `<option value="${s}">Season ${s}</option>`).join('');
-  $('season').onchange = fillEpisodes;
-  fillEpisodes();
-  const saved = JSON.parse(localStorage.getItem('spoilergate') || '{}')[w.id];
-  if (saved) setPosition(saved.position);
-  $('picker').classList.remove('hidden');
+async function runSearch(q) {
+  if (q.length < 2) { showIntro(); return; }
+  const found = await (await api(`/api/works?q=${encodeURIComponent(q)}`)).json();
+  if (q !== $('search').value.trim()) return;   // a newer keystroke is already in flight
+  $('intro').classList.add('hidden');
+  $('show').classList.add('hidden');
+  $('shelfHead').classList.add('hidden');
+  $('grid').classList.remove('hidden');
+  $('grid').replaceChildren(...found.map(posterCard));
+  if (!found.length) offerIndexing(q); else $('note').classList.add('hidden');
 }
 
-function fillEpisodes() {
-  const s = +$('season').value;
-  $('episode').innerHTML = '';
-  for (const u of units.filter(u => u.grouping === s)) {
-    const o = document.createElement('option');
-    o.value = u.abs_order;
-    o.textContent = `E${String(u.number).padStart(2,'0')} — ${u.title}`;
-    $('episode').appendChild(o);
+/* The landing shelf: a stranger should see what they can ask about without
+   having to guess a title first. */
+async function loadShelf() {
+  const shows = await (await api('/api/works')).json();
+  if (!shows.length) return;
+  $('grid').replaceChildren(...shows.map(posterCard));
+  $('shelfHead').classList.remove('hidden');
+  $('grid').classList.remove('hidden');
+}
+loadShelf();
+
+function posterCard(w) {
+  const card = document.createElement('button');
+  card.className = 'card';
+  const art = document.createElement('div');
+  art.className = 'art';
+  if (w.poster_url) {
+    const img = document.createElement('img');
+    img.src = w.poster_url;              // hotlinked from TVMaze, never copied
+    img.alt = '';
+    img.loading = 'lazy';
+    img.referrerPolicy = 'no-referrer';
+    art.appendChild(img);
+  } else {
+    const letters = document.createElement('div');   // many shows have no image
+    letters.className = 'letters';
+    letters.textContent = w.title;
+    art.appendChild(letters);
   }
-  updateTrust();
-  $('episode').onchange = updateTrust;
+  const name = document.createElement('b');
+  name.textContent = w.title;
+  const meta = document.createElement('span');
+  meta.textContent = [w.premiered, w.network].filter(Boolean).join(' · ');
+  card.append(art, name, meta);
+  card.onclick = () => openShow(w.id);
+  return card;
 }
 
-function setPosition(abs) {
-  const u = units.find(x => x.abs_order === abs);
-  if (!u) return;
-  $('season').value = u.grouping; fillEpisodes(); $('episode').value = abs;
-  updateTrust();
+function offerIndexing(q) {
+  const note = $('note');
+  note.classList.remove('hidden');
+  note.replaceChildren();
+  note.append(`Nothing indexed for “${q}”. `);
+  const b = document.createElement('button');
+  b.className = 'act';
+  b.textContent = `Index it now`;
+  b.onclick = async () => {
+    b.disabled = true; b.textContent = 'Reading episode guides…';
+    const res = await api('/api/index', { query: q });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      b.textContent = err.detail || 'That one could not be indexed';
+      return;
+    }
+    openShow((await res.json()).id);
+  };
+  note.appendChild(b);
 }
 
-function gateAbs() { return +$('episode').value - 1; }  // about-to-watch => gate at previous
+function showIntro() {
+  $('note').classList.add('hidden');
+  $('show').classList.add('hidden');
+  $('intro').classList.remove('hidden');
+  loadShelf();
+}
+$('home').onclick = () => { $('search').value = ''; showIntro(); };
 
-function updateTrust() {
-  const g = gateAbs();
-  const u = units.find(x => x.abs_order === g);
-  $('trustline').textContent = g < 1
-    ? 'Fresh start — answers will use nothing from the show yet.'
-    : `Answers use only facts through S${String(u.grouping).padStart(2,'0')}E${String(u.number).padStart(2,'0')} — enforced by retrieval, not by asking the AI nicely.`;
-  if (work) {
-    const store = JSON.parse(localStorage.getItem('spoilergate') || '{}');
-    store[work.id] = { position: +$('episode').value, updated_at: Date.now() };
-    localStorage.setItem('spoilergate', JSON.stringify(store));
+/* ── show view ───────────────────────────────────────────── */
+async function openShow(id) {
+  work = await (await api(`/api/works/${id}`)).json();
+  position = store()[work.id]?.position || 1;
+  if (!work.units.some(u => u.abs_order === position)) position = 1;
+
+  $('grid').classList.add('hidden');
+  $('shelfHead').classList.add('hidden');
+  $('note').classList.add('hidden');
+  $('intro').classList.add('hidden');
+  $('show').classList.remove('hidden');
+  $('answer').classList.add('hidden');
+  $('castList').replaceChildren();
+
+  $('poster').replaceChildren();
+  if (work.poster_url) {
+    const img = document.createElement('img');
+    img.src = work.poster_url; img.alt = ''; img.referrerPolicy = 'no-referrer';
+    $('poster').appendChild(img);
   }
+  $('title').textContent = work.title;
+  $('facts').textContent = [
+    work.premiered, work.network, work.genres.slice(0, 2).join(', '),
+    `${work.units.length} episodes`,
+  ].filter(Boolean).join('  ·  ');
+
+  renderTrack();
 }
 
-async function post(url, body, field) {
-  if (!work) return;
+function renderTrack() {
+  const bySeason = new Map();
+  for (const u of work.units) {
+    if (!bySeason.has(u.grouping)) bySeason.set(u.grouping, []);
+    bySeason.get(u.grouping).push(u);
+  }
+
+  const rows = [];
+  for (const [season, eps] of bySeason) {
+    const row = document.createElement('div');
+    row.className = 'season';
+    const label = document.createElement('i');
+    label.textContent = `S${String(season).padStart(2, '0')}`;
+    const cells = document.createElement('div');
+    cells.className = 'eps';
+    for (const u of eps) {
+      const cell = document.createElement('button');
+      cell.className = 'ep' + (u.abs_order > position ? ' beyond'
+                              : u.abs_order === position ? ' here' : '');
+      cell.title = `${epCode(u)} — ${u.title}`;
+      cell.setAttribute('aria-label', `Set position to ${epCode(u)}`);
+      cell.onclick = () => { position = u.abs_order; save(); renderTrack(); };
+      cells.appendChild(cell);
+    }
+    row.append(label, cells);
+    rows.push(row);
+  }
+  $('seasons').replaceChildren(...rows);
+
+  const at = work.units.find(u => u.abs_order === position);
+  const last = work.units.find(u => u.abs_order === gate());
+  $('gateline').textContent = last
+    ? `About to watch ${epCode(at)} — answers reach ${epCode(last)} and stop there.`
+    : `About to watch ${epCode(at)} — nothing from the show is in reach yet.`;
+}
+
+function save() {
+  const all = store();
+  all[work.id] = { position, updated_at: Date.now() };
+  localStorage.setItem('spoilergate', JSON.stringify(all));
+}
+
+/* ── asking ──────────────────────────────────────────────── */
+async function show(title, path, body, field) {
   $('answer').classList.remove('hidden');
-  $('answer').textContent = 'Thinking…'; $('prov').textContent = '';
-  const res = await (await fetch(url, {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ work_id: work.id, gate_abs: gateAbs(), ...body }),
-  })).json();
-  $('answer').textContent = res[field];
-  const based = res.provenance?.length ? `Based on: ${res.provenance.join(', ')}` : '';
-  const guard = res.guard === 'prompt-only'
-    ? ' · no character index for this show yet, so the retrieval gate is the only hard check'
-    : '';
-  $('prov').textContent = based + guard;
+  $('answerTitle').textContent = title;
+  $('answerBody').textContent = 'Reading what you’ve watched…';
+  $('prov').classList.add('hidden');
+  const res = await (await api(path, { work_id: work.id, gate_abs: gate(), ...body })).json();
+  $('answerBody').textContent = res[field] || res.detail || 'No answer came back.';
+  if (res.provenance?.length) {
+    $('prov').classList.remove('hidden');
+    $('prov').replaceChildren();
+    const b = document.createElement('b');
+    b.textContent = res.provenance.join('  ');
+    $('prov').append('Built from ', b);
+    if (res.guard === 'prompt-only') {
+      $('prov').append(' · no character index for this show yet, so the search cut is the only hard check');
+    }
+  }
 }
 
-$('ask').addEventListener('click', () => {
+$('ask').onclick = () => {
   const q = $('question').value.trim();
-  if (q) post('/api/ask', { question: q }, 'answer');
-});
+  if (q) show(q, '/api/ask', { question: q }, 'answer');
+};
+$('question').addEventListener('keydown', e => { if (e.key === 'Enter') $('ask').click(); });
+$('recap').onclick = () => show('Previously on…', '/api/recap', {}, 'recap');
 
-$('recap').addEventListener('click', () => post('/api/recap', {}, 'recap'));
-
-$('chars').addEventListener('click', async () => {
-  if (!work) return;
-  const list = await (await fetch(
-    `/api/works/${work.id}/characters?gate_abs=${gateAbs()}`)).json();
-  $('charlist').innerHTML = '';
+$('chars').onclick = async () => {
+  const list = await (await api(
+    `/api/works/${work.id}/characters?gate_abs=${gate()}`)).json();
+  $('castList').replaceChildren();
   if (!list.length) {
-    $('charlist').textContent = "No characters indexed for this show yet.";
+    $('castList').textContent = 'Nobody indexed for this show yet.';
     return;
   }
   for (const c of list) {
     const b = document.createElement('button');
     b.textContent = c.name;
-    b.onclick = () => post('/api/character', { entity_id: c.id }, 'profile');
-    $('charlist').appendChild(b);
+    b.onclick = () => show(c.name, '/api/character', { entity_id: c.id }, 'profile');
+    $('castList').appendChild(b);
   }
-});
+};
 </script>
 </body>
 </html>

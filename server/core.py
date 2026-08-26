@@ -18,13 +18,43 @@ def connect(path: str | Path | None = None) -> sqlite3.Connection:
 
 
 def search_works(con: sqlite3.Connection, q: str) -> list[dict]:
-    rows = con.execute(
-        "SELECT id, title, media_type, tier FROM works "
-        "WHERE title LIKE ? AND tier != 'empty' "  # 'empty' = tried, no summaries to answer from
-        "ORDER BY length(title), title LIMIT 20",
-        (f"%{q}%",),
+    columns = (
+        "SELECT w.id, w.title, w.media_type, w.tier, "
+        "COALESCE(a.poster_url,'') poster_url, COALESCE(a.premiered,'') premiered, "
+        "COALESCE(a.network,'') network "
+        "FROM works w LEFT JOIN artwork a ON a.work_id = w.id "
+        "WHERE w.tier != 'empty' "  # 'empty' = tried, nothing to answer from
     )
+    if not q.strip():
+        # No query means the landing shelf. Shows were ingested in TVMaze
+        # popularity order, so the row id doubles as a popularity rank and the
+        # best-known shows come back without storing a score.
+        rows = con.execute(
+            columns + "AND a.poster_url != '' ORDER BY w.id LIMIT 24")
+    else:
+        rows = con.execute(
+            columns + "AND w.title LIKE ? ORDER BY length(w.title), w.title LIMIT 20",
+            (f"%{q}%",))
     return [dict(r) for r in rows]
+
+
+def work_detail(con: sqlite3.Connection, work_id: int) -> dict | None:
+    """Everything the page needs to render a show in one request."""
+    row = con.execute(
+        "SELECT w.id, w.title, w.media_type, w.tier, "
+        "COALESCE(a.poster_url,'') poster_url, COALESCE(a.network,'') network, "
+        "COALESCE(a.premiered,'') premiered, COALESCE(a.genres,'') genres, "
+        "a.rating, COALESCE(a.tvmaze_url,'') tvmaze_url "
+        "FROM works w LEFT JOIN artwork a ON a.work_id = w.id WHERE w.id = ?",
+        (work_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    work = dict(row)
+    work["genres"] = [g for g in work["genres"].split("|") if g]
+    work["units"] = list_units(con, work_id)
+    work["guard"] = guard_state(con, work_id)
+    return work
 
 
 def list_units(con: sqlite3.Connection, work_id: int) -> list[dict]:
