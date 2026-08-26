@@ -51,6 +51,26 @@ $('search').addEventListener('input', async e => {
   const works = await (await fetch(`/api/works?q=${encodeURIComponent(q)}`)).json();
   if (q !== $('search').value.trim()) return;  // stale response, a newer request is in flight
   $('results').innerHTML = '';
+  if (!works.length) {
+    const b = document.createElement('button');
+    b.textContent = `Index "${q}" now (a few seconds)`;
+    b.onclick = async () => {
+      b.disabled = true;
+      b.textContent = `Indexing "${q}"…`;
+      const res = await fetch('/api/index', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ query: q }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        b.textContent = err.detail || "Couldn't index that one";
+        return;
+      }
+      selectWork(await res.json());
+    };
+    $('results').appendChild(b);
+    return;
+  }
   for (const w of works) {
     const b = document.createElement('button');
     b.textContent = w.title;

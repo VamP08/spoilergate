@@ -4,6 +4,7 @@ Usage: python -m ingest.build_db "Breaking Bad" "Dark" ...
 Writes data/spoilergate.db (replaces existing rows per work, idempotent).
 """
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -60,9 +61,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
 """
 
 
-def connect(path: Path = DB_PATH) -> sqlite3.Connection:
+def connect(path: Path | None = None) -> sqlite3.Connection:
+    path = Path(path or os.environ.get("SPOILERGATE_DB", DB_PATH))
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path)
+    con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")  # server can read while a bulk ingest writes
     con.execute("PRAGMA busy_timeout=15000")  # two ingest passes can overlap; queue, don't fail
     con.executescript(SCHEMA)

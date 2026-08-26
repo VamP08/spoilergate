@@ -104,6 +104,54 @@ def recap(req: RecapRequest):
     return {"recap": text, "provenance": provenance, "mode": "gated"}
 
 
+class IndexRequest(BaseModel):
+    query: str
+
+
+@app.post("/api/index")
+def index_show(req: IndexRequest):
+    """Index a show nobody has asked for yet — the long tail of Layer 2.
+
+    Same pipeline as the offline ingest, so a show indexed here is gated and
+    entity-indexed exactly like a precomputed one; there is no second, weaker
+    path. The first person to ask waits; everyone after hits the database.
+
+    ponytail: writes into the running index, which on Render's free tier is an
+    ephemeral disk — a restart loses these and the next asker pays again. That
+    is the point at which this wants Neon, not before.
+    """
+    from ingest import build_db, tvmaze
+
+    query = req.query.strip()
+    if len(query) < 2:
+        raise HTTPException(400, "give me a show name")
+
+    with core.connect() as con:
+        existing = core.search_works(con, query)
+    if existing:
+        return {"status": "already indexed", **existing[0]}
+
+    con = build_db.connect()
+    try:
+        show = tvmaze.fetch_show(query)
+    except Exception:
+        raise HTTPException(404, "no show by that name")
+
+    try:
+        build_db.ingest_show(con, show)
+    except Exception as e:
+        raise HTTPException(502, f"could not index that show: {type(e).__name__}")
+
+    row = con.execute(
+        "SELECT id, title, media_type, tier FROM works WHERE tvmaze_id=?", (show["id"],)
+    ).fetchone()
+    con.close()
+    if row is None or row["tier"] == "empty":
+        raise HTTPException(
+            404, "found the show, but there are no episode summaries to answer from")
+    return {"status": "indexed", **dict(row)}
+
+
 class CharacterRequest(BaseModel):
     work_id: int
     gate_abs: int
