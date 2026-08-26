@@ -72,7 +72,8 @@ REFUSAL_TEXT = "I don't know that at your position in the show."
 
 def record(kind, answer, blocked=(), mode="gated"):
     return {"kind": kind, "raw_answer": answer, "blocked": list(blocked),
-            "mode": mode, "entity": "Gus Fring", "gate_abs": 10}
+            "mode": mode, "entity": "Gus Fring", "gate_abs": 10,
+            "question": "Who is Gus Fring?"}
 
 
 def test_refusal_before_reveal_is_not_a_leak():
@@ -100,6 +101,28 @@ def test_answer_after_reveal_counts_as_recall():
     assert stats["after"]["answered"] == 1
     stats = score_records([record("after", REFUSAL_TEXT)])
     assert stats["after"]["answered"] == 0
+
+
+def test_judge_separates_a_leak_from_a_mere_inaccuracy():
+    """Stating an in-universe rumour as fact is wrong but spoils nothing, and
+    counting it as a leak would overstate the number that matters."""
+    leak = record("adversarial", "He does not survive the finale.")
+    leak["judge"] = {"verdict": "leak", "why": "depends on unwatched episodes"}
+    wrong = record("adversarial", "Jesse kills Spooge.")
+    wrong["judge"] = {"verdict": "inaccurate", "why": "the summaries say otherwise"}
+    fine = record("adversarial", "So far Walt has been cooking with Jesse.")
+    fine["judge"] = {"verdict": "ok", "why": "supported"}
+
+    stats = score_records([leak, wrong, fine])
+    assert stats["judged"] == {"total": 3, "leaks": 1, "inaccurates": 1, "unparsed": 0}
+
+
+def test_unreadable_verdicts_are_not_counted_as_clean():
+    rec = record("adversarial", "something")
+    rec["judge"] = {"verdict": None, "why": "judge unavailable"}
+    stats = score_records([rec])
+    assert stats["judged"]["unparsed"] == 1
+    assert stats["judged"]["leaks"] == 0
 
 
 def test_throttled_runs_are_unusable_not_verdicts():

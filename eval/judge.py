@@ -21,16 +21,24 @@ from server import core, llm
 
 CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "eval" / "verdicts.json"
 
+# Version the prompt: cached verdicts were produced by a specific rubric, and a
+# rubric change has to invalidate them rather than silently mix two standards.
+VERSION = 2
+
 SYSTEM = (
-    "You check a TV show answer for spoilers. You are given the episode summaries a "
-    "viewer HAS watched, summaries of episodes they have NOT, and an answer they were "
-    "given. Reply with JSON only: {\"leak\": true|false, \"why\": \"<one short sentence>\"}. "
-    "leak is true if the answer states, implies, or hints at anything that is only "
-    "supported by the unwatched summaries — including whether a character survives, "
-    "what is coming, or that something notable happens later. It is false if everything "
-    "in the answer is supported by the watched summaries, or the answer refuses. "
+    "You check an answer about a TV show. You are given the episode summaries a viewer "
+    "HAS watched, summaries of episodes they have NOT watched, and the answer they were "
+    "given. Reply with JSON only: "
+    "{\"verdict\": \"leak\"|\"inaccurate\"|\"ok\", \"why\": \"<one short sentence>\"}.\n"
+    "\"leak\": the answer states, implies or hints at something supported ONLY by the "
+    "unwatched summaries — what happens later, whether a character survives, that "
+    "something notable is coming. This is the serious failure.\n"
+    "\"inaccurate\": everything the answer refers to is inside the watched summaries, but "
+    "it gets something wrong — contradicts them, or states a rumour or belief reported in "
+    "them as established fact. Wrong, but it spoils nothing.\n"
+    "\"ok\": the answer is supported by the watched summaries, or it refuses.\n"
     "Answering a question about the future by describing only what has already happened "
-    "is NOT a leak."
+    "is \"ok\", not a leak."
 )
 
 
@@ -67,8 +75,8 @@ def context_for(con: sqlite3.Connection, work_id: int, gate_abs: int,
 
 def judge(con: sqlite3.Connection, record: dict, work_id: int) -> dict:
     key = hashlib.sha256(
-        f"{work_id}|{record['gate_abs']}|{record['question']}|{record['raw_answer']}"
-        .encode()
+        f"v{VERSION}|{work_id}|{record['gate_abs']}|{record['question']}"
+        f"|{record['raw_answer']}".encode()
     ).hexdigest()[:16]
     cache = _load()
     if key in cache:
@@ -87,13 +95,15 @@ def judge(con: sqlite3.Connection, record: dict, work_id: int) -> dict:
     reply = retrying(lambda: llm.chat(messages, max_tokens=800), lambda r: r is None)
 
     if reply is None:
-        return {"leak": None, "why": "judge unavailable"}
+        return {"verdict": None, "why": "judge unavailable"}
     try:
         text = reply.text[reply.text.index("{"):reply.text.rindex("}") + 1]
-        verdict = json.loads(text)
-        verdict = {"leak": bool(verdict["leak"]), "why": str(verdict.get("why", ""))[:200]}
+        parsed = json.loads(text)
+        if parsed["verdict"] not in ("leak", "inaccurate", "ok"):
+            raise ValueError(parsed["verdict"])
+        verdict = {"verdict": parsed["verdict"], "why": str(parsed.get("why", ""))[:200]}
     except (ValueError, KeyError):
-        return {"leak": None, "why": f"unparseable verdict: {reply.text[:80]}"}
+        return {"verdict": None, "why": f"unparseable verdict: {reply.text[:80]}"}
 
     cache[key] = verdict
     _save(cache)

@@ -41,10 +41,11 @@ def main() -> None:
         for i, record in enumerate(pending, 1):
             verdict = judge.judge(con, record, work_id)
             record["judge"] = verdict
-            flag = {True: "LEAK", False: "ok", None: "??"}[verdict["leak"]]
-            print(f"  [{i}/{len(pending)}] {flag:4} {record['kind']:11} "
+            flag = {"leak": "LEAK", "inaccurate": "inacc", "ok": "ok", None: "??"}[
+                verdict.get("verdict")]
+            print(f"  [{i}/{len(pending)}] {flag:5} {record['kind']:11} "
                   f"gate {record['gate_abs']:>3}  {record['question'][:52]}")
-            if verdict["leak"]:
+            if verdict.get("verdict") in ("leak", "inaccurate"):
                 print(f"        why: {verdict['why']}")
 
         by_key = {(r["kind"], r["gate_abs"], r["question"]): r for r in pending}

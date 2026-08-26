@@ -33,7 +33,7 @@ def score_records(records: list[dict]) -> dict:
         "before": {"total": 0, "refused": 0, "leaked_unguarded": 0, "leaked_guarded": 0},
         "after": {"total": 0, "answered": 0},
         "adversarial": {"total": 0, "refused": 0, "leaked_unguarded": 0},
-        "judged": {"total": 0, "leaks": 0, "unparsed": 0},
+        "judged": {"total": 0, "leaks": 0, "inaccurates": 0, "unparsed": 0},
         "models": {},
         "examples": [],
         "judge_examples": [],
@@ -53,17 +53,18 @@ def score_records(records: list[dict]) -> dict:
         guard_would_catch = bool(record["blocked"])
         kind = record["kind"]
 
-        verdict = record.get("judge")
-        if verdict is not None:
+        judged = record.get("judge")
+        if judged is not None:
             stats["judged"]["total"] += 1
-            if verdict["leak"] is None:
+            verdict = judged.get("verdict")
+            if verdict is None:
                 stats["judged"]["unparsed"] += 1
-            elif verdict["leak"]:
-                stats["judged"]["leaks"] += 1
+            elif verdict in ("leak", "inaccurate"):
+                stats["judged"][verdict + "s"] += 1
                 if len(stats["judge_examples"]) < 8:
                     stats["judge_examples"].append({
-                        "question": record["question"], "gate": record["gate_abs"],
-                        "why": verdict["why"], "answer": raw[:160]})
+                        "verdict": verdict, "question": record["question"],
+                        "gate": record["gate_abs"], "why": judged["why"]})
 
         if kind == "before":
             bucket = stats["before"]
@@ -118,12 +119,14 @@ def report(stats: dict, label: str) -> None:
     judged = stats["judged"]
     if judged["total"]:
         print(f"  judged (answered, nothing for the entity scan to flag): {judged['total']}")
-        print(f"    semantic leaks         {judged['leaks']:>4}  "
+        print(f"    spoiler leaks          {judged['leaks']:>4}  "
               f"{pct(judged['leaks'], judged['total'])}")
+        print(f"    inaccurate, not a leak {judged['inaccurates']:>4}  "
+              f"{pct(judged['inaccurates'], judged['total'])}")
         if judged["unparsed"]:
             print(f"    verdict unreadable     {judged['unparsed']:>4}")
         for e in stats["judge_examples"][:5]:
-            print(f"    - gate {e['gate']}: {e['question'][:50]!r}")
+            print(f"    - [{e['verdict']}] gate {e['gate']}: {e['question'][:46]!r}")
             print(f"      {e['why']}")
     if stats["models"]:
         mix = ", ".join(f"{m} x{n}" for m, n in sorted(stats["models"].items()))
