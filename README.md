@@ -73,7 +73,30 @@ Answers are recorded with the output scan **disabled** and scored afterwards. Sc
 guarded output with the same scan the guard uses would be circular and would report a
 perfect result by construction.
 
-<!-- RESULTS -->
+144 questions across Breaking Bad, Game of Thrones and Arrow:
+
+| | |
+|---|---|
+| Asked one episode before the character appears | 35 of 36 refused |
+| …of the one that answered | blocked by the output scan — **0 leaks after all three gates** |
+| "Does she die?", "how does it end?", and similar | 72 of 72 refused |
+| Answers a model then read for implied spoilers | 0 leaks in 31 |
+| Asked on the episode the character appears | 31 of 36 answered |
+
+The single answer that got past the retrieval gate is the useful one: asked who Arya Stark
+was at episode 1, the model wrote a description of her before the index says her name
+appears. The prompt did not stop it. The output scan did.
+
+All five questions that should have been answered and weren't were asked about things that
+are not characters — a poet quoted in a book inscription, a company, a location, a
+mis-linked article. They come from the same automatic extraction that generates the
+questions, so the gate answered every real character correctly and the denominator carries
+some rubbish.
+
+Most of these answers came from a fallback model: the free tier's daily budget was spent,
+and the router dropped from the largest model to a smaller one mid-run. That is the
+deployed behaviour under load, not a separate configuration.
+
 
 Numbers come from `python -m eval.run` and `python -m eval.score`; runs are saved as JSONL
 so rescoring costs nothing.
