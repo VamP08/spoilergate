@@ -16,6 +16,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from eval.throttle import retrying
 from server import core, llm
 
 CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "eval" / "verdicts.json"
@@ -74,12 +75,16 @@ def judge(con: sqlite3.Connection, record: dict, work_id: int) -> dict:
         return cache[key]
 
     seen, unseen = context_for(con, work_id, record["gate_abs"])
-    reply = llm.chat([
+    messages = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content":
             f"WATCHED:\n{seen}\n\nNOT WATCHED:\n{unseen}\n\n"
             f"QUESTION: {record['question']}\nANSWER: {record['raw_answer']}"},
-    ], max_tokens=800)
+    ]
+    # A judge run follows a full eval run, so it starts with every model's
+    # per-minute budget already spent. Waiting is the whole difference between
+    # a verdict and a hole in the results.
+    reply = retrying(lambda: llm.chat(messages, max_tokens=800), lambda r: r is None)
 
     if reply is None:
         return {"leak": None, "why": "judge unavailable"}

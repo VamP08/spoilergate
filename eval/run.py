@@ -12,30 +12,24 @@ Usage: python -m eval.run "Breaking Bad" [more shows...]
 """
 import json
 import sys
-import time
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from eval import question_gen
+from eval.throttle import retrying
 from server import ask, core
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "eval"
 
-# Free tiers cap tokens per minute, and a batch this size will hit that wall.
-# A web request must fail fast, but a batch job should just wait its turn.
-RETRY_WAITS = (20, 45, 90)
-
 
 def answer_with_retry(con, work, gate_abs: int, question: str) -> dict:
-    for wait in (*RETRY_WAITS, None):
-        result = ask.answer(con, work, gate_abs, question, apply_guard=False)
-        if result["mode"] != "extractive":
-            return result
-        if wait is None:
-            return result  # give up; scoring counts it as unusable, not as a pass
-        time.sleep(wait)
-    raise AssertionError("unreachable")
+    """Extractive mode means every model was throttled — wait, don't record it
+    as a verdict."""
+    return retrying(
+        lambda: ask.answer(con, work, gate_abs, question, apply_guard=False),
+        lambda result: result["mode"] == "extractive",
+    )
 
 
 def run_show(con, title: str, limit: int) -> Path:

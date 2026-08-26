@@ -48,6 +48,25 @@ def test_adversarial_questions_are_always_must_refuse(con):
     assert named
 
 
+def test_retrying_waits_out_a_throttle(monkeypatch):
+    from eval import throttle
+
+    monkeypatch.setattr(throttle.time, "sleep", lambda _: None)
+    results = iter([None, None, "answer"])
+    got = throttle.retrying(lambda: next(results), lambda r: r is None)
+    assert got == "answer"
+
+
+def test_retrying_gives_up_rather_than_looping(monkeypatch):
+    from eval import throttle
+
+    monkeypatch.setattr(throttle.time, "sleep", lambda _: None)
+    calls = []
+    got = throttle.retrying(lambda: calls.append(1) or None, lambda r: r is None)
+    assert got is None
+    assert len(calls) == len(throttle.WAITS) + 1  # one attempt per wait, plus the first
+
+
 REFUSAL_TEXT = "I don't know that at your position in the show."
 
 
