@@ -164,6 +164,7 @@ def write_entities(con: sqlite3.Connection, work_id: int, units: list[dict],
         characters.merge_entities(characters.entities_from_units(units), from_cast),
         text_units,
     )
+    found = characters.drop_episode_titles(found, [u.get("title", "") for u in units])
     con.execute("DELETE FROM entities WHERE work_id=?", (work_id,))
     con.executemany(
         "INSERT INTO entities(work_id, name, aliases, type, first_appearance_abs) "

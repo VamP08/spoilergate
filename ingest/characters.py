@@ -27,8 +27,32 @@ def clean_target(target: str) -> str:
     return PARENTHETICAL.sub("", target.split("#")[0]).strip()
 
 
+SUFFIXES = {"jr.", "jr", "sr.", "sr", "ii", "iii", "iv"}
+
+
 def is_person(name: str) -> bool:
     return bool(PERSON.match(name)) and "," not in name
+
+
+def is_character_name(name: str) -> bool:
+    """Stricter than `is_person`, for typing entities that came from a link.
+
+    "Gray Matter Technologies", "Los Pollos Hermanos" and "United States
+    Environmental Protection Agency" all pass `is_person` — capitalised words
+    in a row — and all three turned up in the character list. Organisations run
+    long; people are two words, plus a generational suffix.
+
+    Only used for link-derived entities. The billed cast is authoritative about
+    who is a character, so it keeps the loose test. Getting this wrong costs a
+    name missing from a browsable list; it never costs a block, because the
+    post-guard uses every entity regardless of type.
+    """
+    if not is_person(name):
+        return False
+    words = name.split()
+    if len(words) == 3 and words[-1].lower() in SUFFIXES:
+        return True
+    return len(words) == 2
 
 
 NICKNAME = re.compile(r"^(.*?)\s*['\"]([^'\"]+)['\"]\s*(.*)$")
@@ -62,16 +86,24 @@ def entities_from_cast(cast: list[str], units: list[tuple[int, str]]) -> list[di
         primary, variants = cast_variants(raw)
         if not is_person(primary):
             continue
-        patterns = [name_pattern(v) for v in (primary, *variants)]
+        forms = [primary, *variants]
+        patterns = [(form, name_pattern(form)) for form in forms]
         for abs_order, text in ordered:
-            if any(p.search(text) for p in patterns):
-                found.append({
-                    "name": primary,
-                    "aliases": "|".join(variants),
-                    "type": "character",
-                    "first_appearance_abs": abs_order,
-                })
-                break
+            matched = [form for form, pattern in patterns if pattern.search(text)]
+            if not matched:
+                continue
+            # Billing is not usage: TVMaze says "Michael 'Mike' Ehrmantraut" but
+            # the summaries only ever say "Mike", and a question about the name
+            # nobody writes retrieves nothing. Lead with the form the corpus
+            # actually uses, and keep the rest as aliases so all of them block.
+            name = primary if primary in matched else matched[0]
+            found.append({
+                "name": name,
+                "aliases": "|".join(f for f in forms if f != name),
+                "type": "character",
+                "first_appearance_abs": abs_order,
+            })
+            break
     return found
 
 
@@ -103,7 +135,7 @@ def entities_from_units(units: list[dict]) -> list[dict]:
             # Only alias a person: "board" for "Board of directors" would block
             # an ordinary word every time it appeared in an answer.
             "aliases": "|".join(sorted(aliases.get(name, ()))) if is_person(name) else "",
-            "type": "character" if is_person(name) else "term",
+            "type": "character" if is_character_name(name) else "term",
             "first_appearance_abs": abs_order,
         }
         for name, abs_order in sorted(first.items(), key=lambda kv: (kv[1], kv[0]))
@@ -132,6 +164,16 @@ def redate_by_text(entities: list[dict], units: list[tuple[int, str]]) -> list[d
                 entity["first_appearance_abs"] = abs_order
                 break
     return entities
+
+
+def drop_episode_titles(entities: list[dict], titles: list[str]) -> list[dict]:
+    """Episode titles are linked from summaries and look exactly like names.
+
+    Breaking Bad's "One Minute" and "Gray Matter" entered the character list
+    that way, and the eval caught them as characters nobody could ask about.
+    """
+    banned = {t.strip().lower() for t in titles if t}
+    return [e for e in entities if e["name"].strip().lower() not in banned]
 
 
 def merge_entities(*sources: list[dict]) -> list[dict]:

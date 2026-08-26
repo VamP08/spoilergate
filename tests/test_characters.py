@@ -1,8 +1,10 @@
 from ingest.characters import (
     cast_variants,
     clean_target,
+    drop_episode_titles,
     entities_from_cast,
     entities_from_units,
+    is_character_name,
     is_person,
     merge_entities,
     redate_by_text,
@@ -21,6 +23,33 @@ def test_clean_target_drops_disambiguation_and_anchors():
     assert clean_target("Walter White (Breaking Bad)") == "Walter White"
     assert clean_target("Jesse Pinkman#Season 2") == "Jesse Pinkman"
     assert clean_target("Mark Scout") == "Mark Scout"
+
+
+def test_is_character_name_rejects_organisations():
+    """All three of these reached the character list before the eval caught them."""
+    assert is_character_name("Tuco Salamanca")
+    assert is_character_name("Walter White Jr.")
+    assert not is_character_name("Gray Matter Technologies")
+    assert not is_character_name("Los Pollos Hermanos")
+    assert not is_character_name("United States Environmental Protection Agency")
+
+
+def test_drop_episode_titles():
+    ents = [{"name": "One Minute", "aliases": "", "type": "character",
+             "first_appearance_abs": 27},
+            {"name": "Jane Margolis", "aliases": "", "type": "character",
+             "first_appearance_abs": 17}]
+    kept = drop_episode_titles(ents, ["One Minute", "Pilot"])
+    assert [e["name"] for e in kept] == ["Jane Margolis"]
+
+
+def test_cast_name_uses_the_form_the_summaries_use():
+    """Summaries say "Mike"; nobody writes "Michael Ehrmantraut", so a question
+    about the billed name retrieved nothing and got refused."""
+    units = [(20, "Mike cleans up the scene.")]
+    found = entities_from_cast(["Michael 'Mike' Ehrmantraut"], units)[0]
+    assert found["name"] == "Mike"
+    assert "Michael Ehrmantraut" in found["aliases"].split("|")
 
 
 def test_is_person_separates_names_from_terms():
@@ -87,8 +116,10 @@ def test_cast_dated_by_any_variant():
     found = {e["name"]: e for e in entities_from_cast(
         ["Walter White", "Gustavo 'Gus' Fring", "Never Mentioned"], units)}
     assert found["Walter White"]["first_appearance_abs"] == 1
-    assert found["Gustavo Fring"]["first_appearance_abs"] == 2
-    assert found["Gustavo Fring"]["aliases"] == "Gus Fring|Gus"
+    # dated by the nickname form in episode 2, and named for it, since that is
+    # the form the summaries use — see test_cast_name_uses_the_form...
+    assert found["Gus Fring"]["first_appearance_abs"] == 2
+    assert sorted(found["Gus Fring"]["aliases"].split("|")) == ["Gus", "Gustavo Fring"]
     assert "Never Mentioned" not in found  # unmentioned cast is undatable, so dropped
 
 
