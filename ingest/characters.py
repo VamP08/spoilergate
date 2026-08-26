@@ -71,6 +71,26 @@ def cast_variants(raw: str) -> tuple[str, list[str]]:
     return primary, [v for v in dict.fromkeys(variants) if v and v != primary]
 
 
+def given_name_variants(cast: list[str]) -> dict[str, str]:
+    """Given names that identify exactly one billed character.
+
+    Summaries introduce "Irving Bailiff" once, if at all, and say "Irving"
+    forever after — so matching only the billed name drops him entirely, and
+    Severance's character list came out with three of its leads instead of
+    eight. A given name shared by two cast members identifies neither, so those
+    are left out rather than guessed.
+    """
+    firsts = {}
+    counts: dict[str, int] = {}
+    for raw in cast:
+        primary, _ = cast_variants(raw)
+        parts = primary.split()
+        if len(parts) >= 2 and len(parts[0]) >= 3:
+            firsts[raw] = parts[0]
+            counts[parts[0]] = counts.get(parts[0], 0) + 1
+    return {raw: first for raw, first in firsts.items() if counts[first] == 1}
+
+
 def entities_from_cast(cast: list[str], units: list[tuple[int, str]]) -> list[dict]:
     """Date the billed cast against the summaries.
 
@@ -81,12 +101,14 @@ def entities_from_cast(cast: list[str], units: list[tuple[int, str]]) -> list[di
     poor one, and the cast list is one request.
     """
     ordered = sorted(units)
+    unambiguous_first = given_name_variants(cast)
     found = []
     for raw in cast:
         primary, variants = cast_variants(raw)
         if not is_person(primary):
             continue
-        forms = [primary, *variants]
+        first = unambiguous_first.get(raw)
+        forms = [primary, *variants, *([first] if first else [])]
         patterns = [(form, name_pattern(form)) for form in forms]
         for abs_order, text in ordered:
             matched = [form for form, pattern in patterns if pattern.search(text)]

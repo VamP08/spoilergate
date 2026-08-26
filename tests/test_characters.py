@@ -119,8 +119,33 @@ def test_cast_dated_by_any_variant():
     # dated by the nickname form in episode 2, and named for it, since that is
     # the form the summaries use — see test_cast_name_uses_the_form...
     assert found["Gus Fring"]["first_appearance_abs"] == 2
-    assert sorted(found["Gus Fring"]["aliases"].split("|")) == ["Gus", "Gustavo Fring"]
+    # "Gustavo" joins the aliases as the unambiguous given name, so it is
+    # blocked too — see test_cast_matched_by_given_name_alone.
+    assert sorted(found["Gus Fring"]["aliases"].split("|")) == [
+        "Gus", "Gustavo", "Gustavo Fring"]
     assert "Never Mentioned" not in found  # unmentioned cast is undatable, so dropped
+
+
+def test_cast_matched_by_given_name_alone():
+    """Severance's summaries say "Irving", never "Irving Bailiff", and he was
+    being dropped entirely — three of eight leads made the character list."""
+    units = [(2, "Irving discovers the Optics and Design department is larger.")]
+    found = entities_from_cast(["Irving Bailiff", "Mark Scout"], units)
+    assert [e["name"] for e in found] == ["Irving"]
+    assert "Irving Bailiff" in found[0]["aliases"].split("|")
+
+
+def test_shared_given_name_identifies_nobody():
+    units = [(1, "Mark arrives at work.")]
+    found = entities_from_cast(["Mark Scout", "Mark Smith"], units)
+    assert found == []  # "Mark" is ambiguous, so neither is dated from it
+
+
+def test_full_name_still_preferred_when_it_appears():
+    units = [(1, "Irving Bailiff arrives."), (2, "Irving leaves.")]
+    found = entities_from_cast(["Irving Bailiff"], units)
+    assert found[0]["name"] == "Irving Bailiff"
+    assert found[0]["first_appearance_abs"] == 1
 
 
 def test_merge_takes_earliest_appearance_and_unions_aliases():
