@@ -34,6 +34,23 @@ def test_is_character_name_rejects_organisations():
     assert not is_character_name("United States Environmental Protection Agency")
 
 
+def test_a_leading_article_or_title_is_not_a_name():
+    """All four reached a character list before the clean eval run caught them."""
+    assert not is_character_name("The Wall")
+    assert not is_character_name("Queen Consolidated")
+    assert not is_character_name("Doctor Strange")
+    assert is_character_name("Sansa Stark")
+
+
+def test_given_name_never_comes_from_an_article():
+    """"The Hood" gave a given name of "The", which matches every summary, so it
+    dated to episode one and became a character called "The"."""
+    units = [(1, "The city is quiet."), (4, "The Hood strikes again.")]
+    found = entities_from_cast(["The Hood"], units)
+    assert [e["name"] for e in found] == ["The Hood"]
+    assert found[0]["first_appearance_abs"] == 4  # not 1, where only "The" matched
+
+
 def test_drop_episode_titles():
     ents = [{"name": "One Minute", "aliases": "", "type": "character",
              "first_appearance_abs": 27},

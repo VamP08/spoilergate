@@ -29,6 +29,19 @@ def clean_target(target: str) -> str:
 
 SUFFIXES = {"jr.", "jr", "sr.", "sr", "ii", "iii", "iv"}
 
+# Words that begin a name without being one. "The Hood" gave a given name of
+# "The", which matches every summary ever written, so it dated to episode one
+# and turned up in the character list as a character called "The". Honorifics
+# are here for the same reason and take "Queen Consolidated" and "The Wall" out
+# of the character list with them.
+NOT_A_NAME = {
+    "the", "a", "an", "his", "her", "their", "my", "our",
+    "mr", "mr.", "mrs", "mrs.", "ms", "ms.", "miss", "dr", "dr.", "doctor",
+    "sir", "lord", "lady", "king", "queen", "prince", "princess", "captain",
+    "detective", "agent", "officer", "sergeant", "professor", "father",
+    "mother", "uncle", "aunt", "saint", "st.", "general", "colonel",
+}
+
 
 def is_person(name: str) -> bool:
     return bool(PERSON.match(name)) and "," not in name
@@ -50,6 +63,8 @@ def is_character_name(name: str) -> bool:
     if not is_person(name):
         return False
     words = name.split()
+    if words[0].lower() in NOT_A_NAME:
+        return False
     if len(words) == 3 and words[-1].lower() in SUFFIXES:
         return True
     return len(words) == 2
@@ -85,7 +100,7 @@ def given_name_variants(cast: list[str]) -> dict[str, str]:
     for raw in cast:
         primary, _ = cast_variants(raw)
         parts = primary.split()
-        if len(parts) >= 2 and len(parts[0]) >= 3:
+        if len(parts) >= 2 and len(parts[0]) >= 3 and parts[0].lower() not in NOT_A_NAME:
             firsts[raw] = parts[0]
             counts[parts[0]] = counts.get(parts[0], 0) + 1
     return {raw: first for raw, first in firsts.items() if counts[first] == 1}
