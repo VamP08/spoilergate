@@ -1,5 +1,7 @@
 """SpoilerGate API. Run: uvicorn server.app:app"""
+import sys
 import time
+import traceback
 from pathlib import Path
 
 from contextlib import asynccontextmanager
@@ -186,12 +188,18 @@ def index_show(req: IndexRequest):
     con = build_db.connect()
     try:
         show = tvmaze.fetch_show(query)
-    except Exception:
+    except Exception as e:                                        # noqa: BLE001
+        # Logged, not just returned: a 404 body reaches one visitor, whereas the
+        # logs are the only place anyone can see WHY indexing keeps failing.
+        print(f"index: tvmaze had nothing for {query!r} ({type(e).__name__}: {e})",
+              file=sys.stderr)
         raise HTTPException(404, "no show by that name")
 
+    print(f"index: {show['name']!r} (tvmaze {show['id']})", file=sys.stderr)
     try:
         build_db.ingest_show(con, show)
-    except Exception as e:
+    except Exception as e:                                        # noqa: BLE001
+        traceback.print_exc()
         raise HTTPException(502, f"could not index that show: {type(e).__name__}")
 
     row = con.execute(
@@ -199,6 +207,8 @@ def index_show(req: IndexRequest):
     ).fetchone()
     if row is None or row["tier"] == "empty":
         con.close()
+        print(f"index: no Wikipedia episode summaries for {show['name']!r}",
+              file=sys.stderr)
         raise HTTPException(
             404, "found the show, but there are no episode summaries to answer from")
 
@@ -206,6 +216,7 @@ def index_show(req: IndexRequest):
     # does not pay to index the same show again.
     kept = durable.remember(con, row["id"])
     con.close()
+    print(f"index: stored {row['title']!r} (kept={kept})", file=sys.stderr)
     return {"status": "indexed", "kept": kept, **dict(row)}
 
 

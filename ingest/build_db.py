@@ -95,8 +95,8 @@ def already_attempted(con: sqlite3.Connection, tvmaze_id: int) -> bool:
 def ingest_show(con: sqlite3.Connection, query: str | dict) -> None:
     show = tvmaze.fetch_show(query) if isinstance(query, str) else query
     spine = tvmaze.fetch_episodes(show["id"])
-    found = wikipedia.find_episode_page(show["name"])
-    page, rows = (found[0], wikipedia.collect_rows(found[1])) if found else ("", [])
+    page, rows = wikipedia.locate_episode_page(
+        show["name"], spine, (show.get("premiered") or "")[:4])
     units = wikipedia.match_to_spine(spine, rows)
     with_summary = sum(1 for u in units if u["summary"])
     tier = "shallow" if with_summary else "empty"

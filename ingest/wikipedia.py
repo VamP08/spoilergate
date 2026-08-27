@@ -48,6 +48,67 @@ def find_episode_page(show_title: str) -> tuple[str, str] | None:
     return None
 
 
+def search_titles(term: str, limit: int = 6) -> list[str]:
+    """Wikipedia's own search, for shows whose page is not where we guessed."""
+    r = http.get(
+        API,
+        params={"action": "query", "list": "search", "srsearch": term,
+                "srlimit": limit, "format": "json", "formatversion": 2},
+        headers={"User-Agent": UA},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return [hit["title"] for hit in r.json().get("query", {}).get("search", [])]
+
+
+def _normalise(title: str) -> str:
+    return "".join(c for c in title.lower() if c.isalnum())
+
+
+def titles_match(spine: list[dict], rows: list[dict], need: float = 0.3) -> bool:
+    """Does this page describe the show we asked about?
+
+    Searching Wikipedia for an ambiguous title returns pages that genuinely have
+    episode tables belonging to a different show — "Ghosts" turns up Scooby-Doo.
+    Taking the first page with episodes would index another show's plot under
+    this show's name, which is worse than finding nothing, so a candidate has to
+    prove itself: its episode titles must overlap the ones TVMaze already gave us.
+    """
+    ours = {_normalise(u["title"]) for u in spine if u.get("title")}
+    theirs = {_normalise(r["title"]) for r in rows if r.get("title")}
+    ours.discard("")
+    theirs.discard("")
+    if not ours or not theirs:
+        return False
+    return len(ours & theirs) / min(len(ours), len(theirs)) >= need
+
+
+def locate_episode_page(show_name: str, spine: list[dict],
+                        year: str = "") -> tuple[str, list[dict]]:
+    """The page holding this show's episode summaries, and its parsed rows.
+
+    Guessed titles first, since they are one request and cover most shows. Only
+    when they miss does it fall back to search, and anything search returns has
+    to pass `titles_match`.
+    """
+    found = find_episode_page(show_name)
+    if found:
+        rows = collect_rows(found[1])
+        if titles_match(spine, rows):
+            return found[0], rows
+
+    for candidate in search_titles(f"List of {show_name} episodes {year}".strip()):
+        if _normalise(show_name) not in _normalise(candidate):
+            continue                      # a page about some other show entirely
+        text = fetch_wikitext(candidate)
+        if not text or "{{Episode list" not in text:
+            continue
+        rows = collect_rows(text)
+        if titles_match(spine, rows):
+            return candidate, rows
+    return "", []
+
+
 def collect_rows(wikitext: str) -> list[dict]:
     """Episode rows for a list page. Big shows transclude {{:Show season N}}
     subpages that hold the actual summaries; when those exist, use only them
